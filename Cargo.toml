@@ -28,3 +28,5 @@ toml = "0.8"
 tower-http = { version = "0.6", features = ["fs", "limit"] }
 url = "2"
 uuid = { version = "1", features = ["v4", "serde"] }
+model2vec-rs = { version = "0.4", default-features = false, features = ["local-only", "fancy-regex"] }
+web-push = { version = "0.11", default-features = false, features = ["isahc-client"] }
