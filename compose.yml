@@ -1,0 +1,56 @@
+services:
+    db:
+        image: docker.io/library/postgres:17-alpine
+        environment:
+            POSTGRES_DB: rally
+            POSTGRES_USER: rally
+            POSTGRES_PASSWORD: ${RALLY_DB_PASSWORD:?Set RALLY_DB_PASSWORD}
+        volumes:
+            - database:/var/lib/postgresql/data
+        healthcheck:
+            test: ["CMD-SHELL", "pg_isready -U rally -d rally"]
+            interval: 3s
+            timeout: 3s
+            retries: 30
+    server:
+        build:
+            context: .
+            dockerfile: Containerfile
+        depends_on:
+            db:
+                condition: service_healthy
+        stop_grace_period: 45s
+        ports:
+            - "${RALLY_LISTEN:-127.0.0.1:8787}:8787"
+        environment:
+            DATABASE_URL: ${DATABASE_URL:-postgres://rally:${RALLY_DB_PASSWORD}@db/rally}
+            RALLY_URL: ${RALLY_URL:-http://localhost:8787}
+            RALLY_BIND: 0.0.0.0:8787
+            RALLY_BOOTSTRAP_SECRET: ${RALLY_BOOTSTRAP_SECRET:?Set RALLY_BOOTSTRAP_SECRET}
+            RALLY_DATA: /var/lib/rally
+            RALLY_HOST_DATA: ${RALLY_HOST_DATA:?Set an absolute host data path}
+            RALLY_PODMAN_URL: unix:///run/rally/podman.sock
+            RALLY_NETWORK: ${RALLY_NETWORK:-rally_default}
+            RALLY_WORKER_URL: http://server:8787
+            RALLY_BUILD_DIR: /opt/rally/runtime
+            RALLY_RUNTIME_IMAGE: ${RALLY_RUNTIME_IMAGE:-localhost/rally-runtime:local}
+            RALLY_RUNTIME_MOUNTS: ${RALLY_RUNTIME_MOUNTS:-[]}
+            RALLY_RUNTIME_ENV: ${RALLY_RUNTIME_ENV:-{}}
+            RALLY_ADAPTER: ${RALLY_ADAPTER:-codex}
+            RALLY_WIP_MODEL: ${RALLY_WIP_MODEL:-gpt-6.2-luna}
+            RALLY_MODEL_PROVIDER: ${RALLY_MODEL_PROVIDER:-}
+            RALLY_OIDC_ISSUER: ${RALLY_OIDC_ISSUER:-}
+            RALLY_OIDC_CLIENT_ID: ${RALLY_OIDC_CLIENT_ID:-}
+            RALLY_OIDC_CLIENT_SECRET: ${RALLY_OIDC_CLIENT_SECRET:-}
+            RALLY_VAPID_CONTACT: ${RALLY_VAPID_CONTACT:-mailto:admin@localhost}
+            RALLY_VAPID_PUBLIC: ${RALLY_VAPID_PUBLIC:-}
+            RALLY_VAPID_PRIVATE: ${RALLY_VAPID_PRIVATE:-}
+        volumes:
+            - ${RALLY_HOST_DATA}:/var/lib/rally
+            - ${RALLY_RUNTIME_DIR:-./runtime}:/opt/rally/runtime:ro
+            - ${RALLY_PODMAN_SOCKET:?Set the rootless Podman socket path}:/run/rally/podman.sock
+networks:
+    default:
+        name: ${RALLY_NETWORK:-rally_default}
+volumes:
+    database:

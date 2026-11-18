@@ -3,8 +3,12 @@
 /web/dist/
 /.rally-test*/
 /.env
-/__pycache__/
+__pycache__/
 
 /web/test-results/
 /web/playwright-report/
 /data/
+
+/.rally-data/
+/artifacts/
+/test.env

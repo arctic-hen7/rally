@@ -1,0 +1,13 @@
+.git
+target
+web/node_modules
+web/dist
+.rally-test*
+.env
+data
+
+.rally-data
+artifacts
+test.env
+web/test-results
+web/playwright-report

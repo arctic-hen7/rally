@@ -1,0 +1,41 @@
+name: Build and test
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  integration:
+    runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_PASSWORD: rally-ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready --health-interval 5s
+          --health-timeout 3s --health-retries 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - uses: Swatinem/rust-cache@v2
+      - uses: oven-sh/setup-bun@v2
+      - run: sudo apt-get update && sudo apt-get install -y libssl-dev libcurl4-openssl-dev pkg-config postgresql-client
+      - run: cargo fmt --all --check && cargo test --locked && cargo build --locked --bins
+      - working-directory: web
+        run: bun install --frozen-lockfile && bun x tsc --noEmit && bun run build && bun x playwright install --with-deps chromium
+      - run: sh scripts/fetch-embeddings.sh "$RUNNER_TEMP/rally-embeddings"
+      - name: Exercise server, CLI, Git, OIDC, hooks, agent recovery, routines and PWA
+        env:
+          RALLY_TEST_ADMIN_URL: postgres://postgres:rally-ci@127.0.0.1:5432/postgres
+          RALLY_TEST_BROWSER: '1'
+        run: RALLY_EMBEDDING_DIR="$RUNNER_TEMP/rally-embeddings" python3 tests/integration.py
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: browser-diagnostics
+          path: web/test-results/
