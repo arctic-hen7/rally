@@ -103,7 +103,7 @@ export function Mission({
     );
     const links = refs.filter((x) => body.includes(x.display));
     const active = t.runs.filter((r: any) =>
-        ['working', 'queued', 'interrupted', 'stopping'].includes(r.status),
+        ['working', 'queued', 'interrupted', 'stopping', 'continuing'].includes(r.status),
     );
     const observed = useRef('');
     useEffect(() => {
@@ -472,9 +472,10 @@ export function Mission({
                                     <b>{r.name}</b> · {r.status.state}
                                 </span>
                                 <button onClick={() => act('repo.sync', { mission: m.id })}>Refresh</button>
-                                {r.status.dirty && r.status.state !== 'unresolved merge' && (
-                                    <button onClick={() => wip(r, true)}>Commit to WIP branch</button>
-                                )}
+                                {(r.status.dirty || r.status.state === 'diverged') &&
+                                    r.status.state !== 'unresolved merge' && (
+                                        <button onClick={() => wip(r, true)}>Commit to WIP branch</button>
+                                    )}
                             </div>
                         ))}
                         {fresh.length > 0 && (

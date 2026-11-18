@@ -88,3 +88,5 @@ ALTER TABLE routines ADD COLUMN IF NOT EXISTS directory text NOT NULL DEFAULT '.
 ALTER TABLE oidc_flows ADD COLUMN IF NOT EXISTS cli_return jsonb;
 CREATE TABLE IF NOT EXISTS cli_codes (digest text PRIMARY KEY, person text REFERENCES people, challenge text NOT NULL, expires timestamptz NOT NULL);
 ALTER TABLE people ADD COLUMN IF NOT EXISTS push_settings jsonb NOT NULL DEFAULT '{"mentions":true,"questions":true,"outcomes":true,"following":true}';
+ALTER TABLE messages ADD COLUMN IF NOT EXISTS native_reply jsonb;
+ALTER TABLE runs ADD COLUMN IF NOT EXISTS next_input bigint REFERENCES messages;

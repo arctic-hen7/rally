@@ -117,10 +117,10 @@ pub fn open(c: &Client, mid: &str) -> Result<PathBuf> {
     if !store.exists() {
         let temp = store.with_extension(rally_teams::id("tmp"));
         rally_teams::materialize_skills(&temp, &files)?;
-        if let Err(e) = fs::rename(temp, &store) {
-            if !store.exists() {
-                return Err(e.into());
-            }
+        if let Err(e) = fs::rename(temp, &store)
+            && !store.exists()
+        {
+            return Err(e.into());
         }
     }
     let attach = |dir: &Path| -> Result<()> {
@@ -132,10 +132,10 @@ pub fn open(c: &Client, mid: &str) -> Result<PathBuf> {
             }
             for entry in dest.read_dir()? {
                 let e = entry?;
-                if let Ok(old) = fs::read_link(e.path()) {
-                    if old.starts_with(root.join(".rally/skills")) {
-                        fs::remove_file(e.path())?;
-                    }
+                if let Ok(old) = fs::read_link(e.path())
+                    && old.starts_with(root.join(".rally/skills"))
+                {
+                    fs::remove_file(e.path())?;
                 }
             }
             for name in files.as_object().unwrap().keys() {

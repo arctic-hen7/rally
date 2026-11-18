@@ -57,7 +57,7 @@ function Questions({ q, run, changed }: any) {
                     <div className="question-field" key={key}>
                         <label htmlFor={q.id + key}>{f.question || f.title}</label>
                         {q.answer ? (
-                            <small>{JSON.stringify(q.answer[key]?.answers || q.answer[key])}</small>
+                            <small>{q.answer[key]?.answers?.join(', ') ?? String(q.answer[key] ?? '')}</small>
                         ) : (
                             <>
                                 <div className="button-wrap">
@@ -135,7 +135,7 @@ export function Working({ id, close, tick, refresh }: any) {
                 <p>{error || 'Connecting…'}</p>
             </aside>
         );
-    const active = ['working', 'queued', 'interrupted', 'stopping'].includes(run.status);
+    const active = ['working', 'queued', 'interrupted', 'stopping', 'continuing'].includes(run.status);
     return (
         <aside className="side-pane working">
             <header className="pane-head">

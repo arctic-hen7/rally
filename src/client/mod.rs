@@ -510,7 +510,9 @@ pub fn main() -> Result<()> {
                     io::stdout().flush()?;
                 }
                 printed = text.into();
-                if !["working", "queued", "interrupted", "stopping"].contains(&opt(&r, "status")) {
+                if !["working", "queued", "interrupted", "stopping", "continuing"]
+                    .contains(&opt(&r, "status"))
+                {
                     println!("\n{}", r["status"]);
                     break;
                 }

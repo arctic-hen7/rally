@@ -14,9 +14,31 @@ pub fn engine() -> Command {
     cmd
 }
 
+fn installation_label() -> Result<String> {
+    let host_data = std::env::var("RALLY_HOST_DATA")?;
+    Ok(format!(
+        "io.framesurge.rally.installation={}",
+        rally_teams::digest(&host_data)
+    ))
+}
+
 pub async fn build(app: &App) -> Result<()> {
     if local() {
         return Ok(());
+    }
+    // The database lock ensures previous workers from this installation are orphaned
+    let mut owned = engine();
+    owned.args([
+        "ps",
+        "--all",
+        "--quiet",
+        "--filter",
+        &format!("label={}", installation_label()?),
+    ]);
+    for id in output(owned).await?.lines() {
+        let mut remove = engine();
+        remove.args(["rm", "--force", "--ignore", id]);
+        output(remove).await?;
     }
     let tools = app.root.join("tools");
     tokio::fs::create_dir_all(&tools).await?;
@@ -74,6 +96,8 @@ pub fn command(
         "--security-opt=no-new-privileges",
         "--label",
         "io.framesurge.rally.managed=true",
+        "--label",
+        &installation_label()?,
         "--network",
         &var("RALLY_NETWORK", "rally_default"),
         "--workdir",
@@ -107,10 +131,6 @@ pub fn command(
                 "{}:/rally/context:ro",
                 host_root.join("contexts").join(rid).display()
             ),
-        ]);
-    }
-    if let Some((_, rid)) = env.iter().find(|(k, _)| k == "RALLY_RUN") {
-        c.args([
             "--volume",
             &format!(
                 "{}:/root/.agents/skills:ro",

@@ -136,17 +136,17 @@ fn last_reply(d: &Value, adapter: &str) -> Result<String> {
         let Ok(v) = serde_json::from_str::<Value>(&line?) else {
             continue;
         };
-        if v["type"] == "assistant" {
-            if let Some(blocks) = v["message"]["content"].as_array() {
-                let text = blocks
-                    .iter()
-                    .filter(|b| b["type"] == "text")
-                    .filter_map(|b| b["text"].as_str())
-                    .collect::<Vec<_>>()
-                    .join("\n");
-                if !text.is_empty() {
-                    last = text;
-                }
+        if v["type"] == "assistant"
+            && let Some(blocks) = v["message"]["content"].as_array()
+        {
+            let text = blocks
+                .iter()
+                .filter(|b| b["type"] == "text")
+                .filter_map(|b| b["text"].as_str())
+                .collect::<Vec<_>>()
+                .join("\n");
+            if !text.is_empty() {
+                last = text;
             }
         }
     }

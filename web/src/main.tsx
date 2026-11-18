@@ -511,6 +511,12 @@ function App() {
                         act={act}
                         revision={rev}
                         exit={async () => {
+                            const registration = await navigator.serviceWorker?.getRegistration();
+                            const device = await registration?.pushManager?.getSubscription();
+                            if (device) {
+                                await api('device.unsubscribe', { endpoint: device.endpoint });
+                                await device.unsubscribe();
+                            }
                             await api('logout', {}, true);
                             setMe(null);
                         }}

@@ -97,6 +97,12 @@ pub async fn supervise(app: App) -> Result<()> {
         &[],
     )
     .await?;
+    execute(
+        &app.db,
+        "UPDATE runs SET status='queued' WHERE status='continuing'",
+        &[],
+    )
+    .await?;
     let mut tasks = JoinSet::new();
     let mut stop = app.shutdown.clone();
     let mut interval = tokio::time::interval(Duration::from_millis(300));
@@ -112,6 +118,7 @@ pub async fn supervise(app: App) -> Result<()> {
                     let app=app.clone();let rid:String=row.get("id");let resume=row.get::<String,_>("status")=="interrupted";
                     tasks.spawn(async move{
                         let outcome=drive(&app,&rid,&token,resume).await;
+                        let _ = execute(&app.db, "UPDATE runs SET status='queued' WHERE id=$1 AND status='continuing'", &[&rid]).await;
                         if *app.shutdown.borrow(){let _=execute(&app.db,"UPDATE runs SET status='interrupted',token_digest=NULL WHERE id=$1 AND status='working'",&[&rid]).await;}
                         else if let Err(e)=outcome{eprintln!("Run {rid}: {e:#}");let _=chat::finish(&app,&rid,"failed",&e.to_string()).await;}
                     });
@@ -195,7 +202,7 @@ async fn drive(app: &App, rid: &str, token: &str, resuming: bool) -> Result<()> 
     };
     let mut shutdown = app.shutdown.clone();
     let result = tokio::select! {
-        r=conversation(app,rid,&r,resuming,acp,&mut w,&root,&context)=>r,
+        r=conversation(app,&r,resuming,acp,&mut w,&root,&context)=>r,
         _=shutdown.changed()=>Ok(())
     };
     drop(w);
@@ -220,7 +227,6 @@ async fn drive(app: &App, rid: &str, token: &str, resuming: bool) -> Result<()> 
 
 async fn conversation(
     app: &App,
-    rid: &str,
     r: &Value,
     resuming: bool,
     acp: bool,
@@ -228,6 +234,7 @@ async fn conversation(
     root: &Path,
     context: &Path,
 ) -> Result<()> {
+    let rid = field(r, "id")?;
     let session = field(r, "session")?;
     let mid = field(r, "mission")?;
     let model = field(r, "model")?;
@@ -264,6 +271,17 @@ async fn conversation(
             .or(result["sessionId"].as_str())
             .context("ACP omitted the session ID")?
             .to_string();
+        if !engine::local()
+            && result["modes"]["availableModes"]
+                .as_array()
+                .is_some_and(|modes| modes.iter().any(|m| m["id"] == "agent-full-access"))
+        {
+            w.call(
+                "session/set_mode",
+                json!({"sessionId": native_id, "modeId": "agent-full-access"}),
+            )
+            .await?;
+        }
         if let Some(config) = result["configOptions"]
             .as_array()
             .and_then(|opts| opts.iter().find(|o| o["category"] == "model"))
@@ -298,7 +316,12 @@ async fn conversation(
     } else {
         w.call("initialize",json!({"clientInfo":{"name":"rally","version":env!("CARGO_PKG_VERSION")},"capabilities":{"experimentalApi":true}})).await?;
         w.send(json!({"method":"initialized"})).await?;
-        let mut params = json!({"cwd":cwd,"model":model,"developerInstructions":instructions,"approvalPolicy":"never","sandbox":"workspace-write"});
+        let sandbox = if engine::local() {
+            "workspace-write"
+        } else {
+            "danger-full-access"
+        };
+        let mut params = json!({"cwd":cwd,"model":model,"developerInstructions":instructions,"approvalPolicy":"never","sandbox":sandbox});
         if let Some(p) = std::env::var("RALLY_MODEL_PROVIDER")
             .ok()
             .filter(|p| !p.is_empty())
@@ -336,8 +359,11 @@ async fn conversation(
         &[session, &native_id],
     )
     .await?;
-    let trigger = r["trigger"].as_i64().unwrap();
-    let addressed = sqlx::query("SELECT author,body,links FROM messages WHERE id=$1")
+    let trigger = r["next_input"]
+        .as_i64()
+        .or(r["trigger"].as_i64())
+        .context("Missing addressing message")?;
+    let addressed = sqlx::query("SELECT author,body,links,native_reply FROM messages WHERE id=$1")
         .bind(trigger)
         .fetch_one(&app.db)
         .await?;
@@ -368,7 +394,7 @@ async fn conversation(
         format!(
             "{instructions}\n\n{history}\n\n### Addressed by {}\n{}\nReferences: {}",
             addressed.get::<String, _>("author"),
-            addressed.get::<String, _>("body"),
+            input_text(&addressed),
             addressed.get::<Value, _>("links")
         )
     };
@@ -391,13 +417,20 @@ async fn conversation(
             .await?;
         turn = field(&result["turn"], "id")?.to_string();
     }
-    sqlx::query("UPDATE sessions SET delivered=ARRAY(SELECT DISTINCT unnest(delivered || $2::bigint[])) WHERE id=$1").bind(session).bind(delivered).execute(&app.db).await?;
-    execute(
-        &app.db,
-        "UPDATE runs SET native_turn=$2 WHERE id=$1",
-        &[rid, &turn],
-    )
-    .await?;
+    let mut tx = app.db.begin().await?;
+    sqlx::query("UPDATE sessions SET delivered=ARRAY(SELECT DISTINCT unnest(delivered || $2::bigint[])) WHERE id=$1")
+        .bind(session).bind(delivered).execute(&mut *tx).await?;
+    sqlx::query("UPDATE run_inputs SET sent=true WHERE run=$1 AND message=$2")
+        .bind(rid)
+        .bind(trigger)
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query("UPDATE runs SET native_turn=$2 WHERE id=$1")
+        .bind(rid)
+        .bind(&turn)
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
     let mut partial = if resuming {
         opt(r, "partial").to_string()
     } else {
@@ -448,9 +481,9 @@ async fn conversation(
                 }
                 let state:String=sqlx::query_scalar("SELECT status FROM runs WHERE id=$1").bind(rid).fetch_one(&app.db).await?;
                 if state=="stopping"{chat::finish(app,rid,"stopped","").await?;return Ok(());}
-                for input in sqlx::query("SELECT m.id,m.author,m.body FROM run_inputs i JOIN messages m ON m.id=i.message WHERE i.run=$1 AND NOT i.sent ORDER BY i.id").bind(rid).fetch_all(&app.db).await?{
+                for input in sqlx::query("SELECT m.id,m.author,m.body,m.native_reply FROM run_inputs i JOIN messages m ON m.id=i.message WHERE i.run=$1 AND NOT i.sent ORDER BY i.id").bind(rid).fetch_all(&app.db).await?{
                     let id:i64=input.get("id");if steering.values().any(|v|*v==id){continue;}
-                    let text=format!("{} steers: {}",input.get::<String,_>("author"),input.get::<String,_>("body"));
+                    let text=format!("{} steers: {}",input.get::<String,_>("author"),input_text(&input));
                     let key=steer(w,acp,&native_id,&turn,&text).await?;
                     steering.insert(key,id);
                 }
@@ -470,6 +503,9 @@ async fn conversation(
         &[rid, &partial],
     )
     .await?;
+    if acp {
+        chat::record_work(app, rid, &final_text, &format!("acp:{trigger}")).await?;
+    }
     chat::finish(
         app,
         rid,
@@ -482,6 +518,16 @@ async fn conversation(
     )
     .await?;
     Ok(())
+}
+
+fn input_text(message: &sqlx::postgres::PgRow) -> String {
+    let body: String = message.get("body");
+    match message.get::<Option<Value>, _>("native_reply") {
+        Some(replies) => format!(
+            "{body}\n<send_user_message_question_reply>{replies}</send_user_message_question_reply>"
+        ),
+        None => body,
+    }
 }
 
 async fn steer(w: &mut Wire, acp: bool, native: &str, turn: &str, text: &str) -> Result<i64> {
@@ -512,8 +558,10 @@ async fn question(
             key.to_string()
         }
     );
-    let wrote=sqlx::query("INSERT INTO questions(id,run,request,prompt,blocking) VALUES($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING").bind(qid).bind(rid).bind(request).bind(prompt).bind(blocking).execute(&mut *tx).await?.rows_affected();
+    let wrote=sqlx::query("INSERT INTO questions(id,run,request,prompt,blocking) VALUES($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING").bind(&qid).bind(rid).bind(request).bind(&prompt).bind(blocking).execute(&mut *tx).await?.rows_affected();
     if wrote > 0 {
+        sqlx::query("INSERT INTO messages(thread,author,actor,source,body,origin_key) SELECT r.working_thread,a.name,a.id,'agent',$2,$3 FROM runs r JOIN sessions s ON s.id=r.session JOIN agents a ON a.id=s.agent WHERE r.id=$1 AND r.working_thread IS NOT NULL ON CONFLICT DO NOTHING")
+            .bind(rid).bind(chat::question_text(&prompt)).bind(format!("question:{qid}")).execute(&mut *tx).await?;
         let r=sqlx::query("SELECT r.dispatcher,s.thread FROM runs r JOIN sessions s ON s.id=r.session WHERE r.id=$1").bind(rid).fetch_one(&mut *tx).await?;
         chat::notify(
             &mut tx,

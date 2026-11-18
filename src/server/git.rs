@@ -247,20 +247,18 @@ pub async fn call(app: &App, a: &Actor, op: &str, d: &Value) -> Result<Value> {
             {
                 bail!("Invalid branch");
             }
+            let _guard = app.git_lock.lock().await;
+            if root.join(name).exists()
+                && command(
+                    app,
+                    &root,
+                    Some(name),
+                    &["config", "--get", "remote.origin.url"],
+                )
+                .await?
+                    != field(d, "remote")?
             {
-                let _guard = app.git_lock.lock().await;
-                if root.join(name).exists()
-                    && command(
-                        app,
-                        &root,
-                        Some(name),
-                        &["config", "--get", "remote.origin.url"],
-                    )
-                    .await?
-                        != field(d, "remote")?
-                {
-                    bail!("Existing checkout has a different origin. Choose a new checkout name");
-                }
+                bail!("Existing checkout has a different origin. Choose a new checkout name");
             }
             execute(
                 &app.db,
@@ -297,7 +295,25 @@ pub async fn call(app: &App, a: &Actor, op: &str, d: &Value) -> Result<Value> {
                 {
                     bail!("Commit local edits before returning");
                 }
-                command(app, &root, Some(name), &["switch", field(&r, "branch")?]).await?;
+                let original = field(&r, "branch")?;
+                let recovery = field(&r, "recovery")?;
+                let upstream = format!("refs/remotes/origin/{original}");
+                command(app, &root, Some(name), &["fetch", "--prune", "origin"]).await?;
+                if !contained(app, &root, name, original, &upstream).await
+                    && !contained(app, &root, name, original, recovery).await
+                {
+                    bail!(
+                        "The original local branch contains independent commits. Preserve them before returning"
+                    );
+                }
+                // The explicitly retained recovery branch protects local commits after a squash
+                command(
+                    app,
+                    &root,
+                    Some(name),
+                    &["switch", "-C", original, &upstream],
+                )
+                .await?;
                 execute(
                     &app.db,
                     "UPDATE repos SET recovery=NULL WHERE mission=$1 AND name=$2",
@@ -311,8 +327,13 @@ pub async fn call(app: &App, a: &Actor, op: &str, d: &Value) -> Result<Value> {
                 {
                     bail!("Resolve the merge before committing");
                 }
+                let paths = command(app, &root, Some(name), &["status", "--short"]).await?;
+                let fork = d["fork"] == true;
+                if paths.is_empty() && !fork {
+                    bail!("There are no changes to commit");
+                }
                 let mut summary = opt(d, "summary").to_string();
-                if summary.is_empty() {
+                if !paths.is_empty() && summary.is_empty() {
                     let diff = command(
                         app,
                         &root,
@@ -328,7 +349,6 @@ pub async fn call(app: &App, a: &Actor, op: &str, d: &Value) -> Result<Value> {
                     )
                     .await?;
                     let diff = diff.chars().take(16000).collect::<String>();
-                    let paths = command(app, &root, Some(name), &["status", "--short"]).await?;
                     let history=rows(&app.db,"SELECT to_jsonb(left(body,2048)) FROM messages WHERE thread=COALESCE(NULLIF($2,''),(SELECT id FROM threads WHERE mission=$1 AND kind='main')) AND thread IN(SELECT id FROM threads WHERE mission=$1) ORDER BY id DESC LIMIT 8",&[&mid,opt(d,"thread")]).await?;
                     let prompt = format!(
                         "Write only one concise Git WIP commit subject. Files: {paths}\nDiff: {diff}\nRecent conversation: {history}"
@@ -345,22 +365,24 @@ pub async fn call(app: &App, a: &Actor, op: &str, d: &Value) -> Result<Value> {
                     )
                     .await?;
                 }
-                command(app, &root, Some(name), &["add", "--all"]).await?;
-                command(
-                    app,
-                    &root,
-                    Some(name),
-                    &[
-                        "commit",
-                        "--no-gpg-sign",
-                        "-m",
-                        &format!(
-                            "wip: {}",
-                            summary.lines().next().unwrap_or("work in progress")
-                        ),
-                    ],
-                )
-                .await?;
+                if !paths.is_empty() {
+                    command(app, &root, Some(name), &["add", "--all"]).await?;
+                    command(
+                        app,
+                        &root,
+                        Some(name),
+                        &[
+                            "commit",
+                            "--no-gpg-sign",
+                            "-m",
+                            &format!(
+                                "wip: {}",
+                                summary.lines().next().unwrap_or("work in progress")
+                            ),
+                        ],
+                    )
+                    .await?;
+                }
                 if d["fork"] == true {
                     command(app, &root, Some(name), &["push", "-u", "origin", "HEAD"]).await?;
                 }

@@ -187,10 +187,10 @@ async fn upkeep(app: App) {
         if let Err(e) = search::index(&app).await {
             eprintln!("Search indexing: {e}");
         }
-        if cycle % 5 == 0 {
-            if let Err(e) = notify::deliver(&app).await {
-                eprintln!("Push: {e}");
-            }
+        if cycle % 5 == 0
+            && let Err(e) = notify::deliver(&app).await
+        {
+            eprintln!("Push: {e}");
         }
         if cycle % 30 == 0 {
             if let Err(e) = skills::refresh(&app).await {
@@ -235,6 +235,8 @@ async fn run(app: &App, jid: &str, token: &str) -> Result<(&'static str, String)
             },
         ),
     ]);
+    let name = format!("rally-{jid}");
+    let mut shutdown = app.shutdown.clone();
     for repo in r["repos"].as_array().into_iter().flatten() {
         let args = [
             "clone",
@@ -244,9 +246,15 @@ async fn run(app: &App, jid: &str, token: &str) -> Result<(&'static str, String)
             field(repo, "remote")?,
             field(repo, "name")?,
         ];
-        engine::output(engine::command(app, &root, None, &env, None, "git", &args)?).await?;
+        let clone = engine::command(app, &root, None, &env, Some(&name), "git", &args)?;
+        tokio::select! {
+            result = engine::output(clone) => { result?; }
+            _ = shutdown.changed() => {
+                engine::stop(&name).await;
+                return Ok(("aborted", String::new()));
+            }
+        }
     }
-    let name = format!("rally-{jid}");
     let mut cmd = engine::command(
         app,
         &root,
@@ -271,7 +279,6 @@ async fn run(app: &App, jid: &str, token: &str) -> Result<(&'static str, String)
     let pid = child.id().unwrap();
     let stdout = tokio::spawn(tail(child.stdout.take().unwrap()));
     let stderr = tokio::spawn(tail(child.stderr.take().unwrap()));
-    let mut shutdown = app.shutdown.clone();
     let status = tokio::select! {
         result=child.wait()=>if result?.success(){"done"}else{"failed"},
         _=shutdown.changed()=>{

@@ -32,7 +32,7 @@ export function Avatar({
     return (
         <span className={`avatar ${small ? 'small' : ''} ${agent ? 'agent' : colors[hash % colors.length]}`}>
             {agent
-                ? '✳'
+                ? '✳︎'
                 : name
                       .trim()
                       .split(/\s+/)
