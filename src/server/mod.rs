@@ -162,7 +162,16 @@ async fn thread(app: &App, a: &Actor, data: &Value, write: bool) -> Result<Value
         )
         .await?
     };
-    mission(app, a, field(&row, "mission")?, write).await?;
+    if let Err(e) = mission(app, a, field(&row, "mission")?, write).await {
+        let allowed = if let Some(run) = &a.run {
+            !write && sqlx::query_scalar::<_,bool>("SELECT EXISTS(SELECT 1 FROM runs WHERE id=$1 AND status='working' AND grants ? $2)").bind(run).bind(field(&row,"id")?).fetch_one(&app.db).await?
+        } else {
+            false
+        };
+        if !allowed {
+            return Err(e);
+        }
+    }
     Ok(row)
 }
 
@@ -200,6 +209,7 @@ async fn live(State(app): State<App>, headers: HeaderMap) -> ApiResult {
     use axum::response::sse::{Event, KeepAlive, Sse};
     use tokio_stream::{StreamExt, wrappers::BroadcastStream};
     let a = auth::actor(&app, &headers).await?;
+    let mut stop = app.shutdown.clone();
     let stream = BroadcastStream::new(app.events.subscribe())
         .then(move |evt| {
             let app = app.clone();
@@ -213,6 +223,9 @@ async fn live(State(app): State<App>, headers: HeaderMap) -> ApiResult {
             }
         })
         .filter_map(|x| x);
+    let stream = futures_util::StreamExt::take_until(stream, async move {
+        let _ = stop.changed().await;
+    });
     Ok(Sse::new(stream)
         .keep_alive(KeepAlive::default())
         .into_response())
@@ -223,6 +236,13 @@ pub async fn serve() -> Result<()> {
         .max_connections(24)
         .connect(&std::env::var("DATABASE_URL")?)
         .await?;
+    let mut coordination = db.acquire().await?;
+    if !sqlx::query_scalar::<_, bool>("SELECT pg_try_advisory_lock(712737)")
+        .fetch_one(&mut *coordination)
+        .await?
+    {
+        bail!("Another Rally server is already running against this database");
+    }
     let mut tx = db.begin().await?;
     sqlx::query("SELECT pg_advisory_xact_lock(712734)")
         .execute(&mut *tx)
@@ -266,7 +286,7 @@ pub async fn serve() -> Result<()> {
         .with_state(app.clone());
     let address = var("RALLY_BIND", "127.0.0.1:8787");
     let listener = tokio::net::TcpListener::bind(&address).await?;
-    engine::build().await?;
+    engine::build(&app).await?;
     let worker = tokio::spawn(runtime::supervise(app.clone()));
     let maintenance = tokio::spawn(routines::maintenance(app.clone()));
     println!("Rally listening on {address}");

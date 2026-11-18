@@ -172,8 +172,11 @@ async fn reconcile(app: &App, r: &Value, idle: bool) -> Result<Value> {
 }
 
 pub async fn sync(app: &App, mid: &str) -> Result<Value> {
+    sync_before_run(app, mid, "").await
+}
+pub async fn sync_before_run(app: &App, mid: &str, rid: &str) -> Result<Value> {
     let _guard = app.git_lock.lock().await;
-    let idle:bool=sqlx::query_scalar("SELECT NOT EXISTS(SELECT 1 FROM runs r JOIN sessions s ON s.id=r.session JOIN threads t ON t.id=s.thread WHERE t.mission=$1 AND r.status IN ('working','stopping'))").bind(mid).fetch_one(&app.db).await?;
+    let idle:bool=sqlx::query_scalar("SELECT NOT EXISTS(SELECT 1 FROM runs r JOIN sessions s ON s.id=r.session JOIN threads t ON t.id=s.thread WHERE t.mission=$1 AND r.id!=$2 AND r.status IN ('working','stopping'))").bind(mid).bind(rid).fetch_one(&app.db).await?;
     let repos = rows(
         &app.db,
         "SELECT to_jsonb(r) FROM repos r WHERE mission=$1 ORDER BY name",

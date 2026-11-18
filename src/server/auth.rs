@@ -82,7 +82,7 @@ pub async fn endpoint(
                 .fetch_one(&app.db)
                 .await?;
             Ok(
-                Json(json!({"setup":!ready,"oidc":std::env::var("RALLY_OIDC_ISSUER").is_ok()}))
+                Json(json!({"setup":!ready,"oidc":!var("RALLY_OIDC_ISSUER","").is_empty()}))
                     .into_response(),
             )
         }

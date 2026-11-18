@@ -128,7 +128,7 @@ async fn drive(app: &App, rid: &str, token: &str, resuming: bool) -> Result<()> 
     let mid = field(&r, "mission")?;
     let root = git::workspace(app, mid);
     tokio::fs::create_dir_all(&root).await?;
-    let repos = git::sync(app, mid).await?;
+    let repos = git::sync_before_run(app, mid, rid).await?;
     if let Some(broken) = repos
         .as_array()
         .unwrap()
@@ -262,7 +262,10 @@ async fn conversation(
         w.call("initialize",json!({"clientInfo":{"name":"rally","version":env!("CARGO_PKG_VERSION")},"capabilities":{"experimentalApi":true}})).await?;
         w.send(json!({"method":"initialized"})).await?;
         let mut params = json!({"cwd":cwd,"model":model,"developerInstructions":instructions,"approvalPolicy":"never","sandbox":"workspace-write"});
-        if let Ok(p) = std::env::var("RALLY_MODEL_PROVIDER") {
+        if let Some(p) = std::env::var("RALLY_MODEL_PROVIDER")
+            .ok()
+            .filter(|p| !p.is_empty())
+        {
             params["modelProvider"] = json!(p);
         }
         if let Ok(config) = std::env::var("RALLY_CODEX_OVERRIDES") {

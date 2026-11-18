@@ -2527,6 +2527,7 @@ dependencies = [
  "chrono",
  "clap",
  "cron",
+ "futures-util",
  "hex",
  "jsonwebtoken",
  "model2vec-rs",

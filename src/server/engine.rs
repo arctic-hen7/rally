@@ -14,10 +14,15 @@ pub fn engine() -> Command {
     cmd
 }
 
-pub async fn build() -> Result<()> {
+pub async fn build(app: &App) -> Result<()> {
     if local() {
         return Ok(());
     }
+    let tools = app.root.join("tools");
+    tokio::fs::create_dir_all(&tools).await?;
+    let cli = std::env::current_exe()?.with_file_name("rally");
+    tokio::fs::copy(cli, tools.join("rally.new")).await?;
+    tokio::fs::rename(tools.join("rally.new"), tools.join("rally")).await?;
     let context = var("RALLY_BUILD_DIR", "runtime");
     let status = engine()
         .args([
@@ -75,6 +80,13 @@ pub fn command(
         "/workspace",
         "--volume",
         &format!("{}:/workspace:rw", host_path(workspace)?),
+    ]);
+    c.args([
+        "--volume",
+        &format!(
+            "{}:/usr/local/bin/rally:ro",
+            host_root.join("tools/rally").display()
+        ),
     ]);
     if let Some(name) = name {
         c.args(["--name", name]);

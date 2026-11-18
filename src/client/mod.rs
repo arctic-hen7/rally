@@ -1,0 +1,605 @@
+mod hooks;
+mod workspace;
+
+use anyhow::{Context, Result, bail};
+use clap::{Arg, ArgAction, Command};
+use rally_teams::{config_dir, field, opt, read_json, write_json};
+use serde_json::{Value, json};
+use std::{
+    io::{self, Read, Write},
+    path::{Path, PathBuf},
+};
+
+pub struct Client {
+    pub url: String,
+    token: String,
+    http: reqwest::blocking::Client,
+}
+impl Client {
+    fn new() -> Result<Self> {
+        let c = read_json(&config_dir().join("config.json"))?;
+        let url = std::env::var("RALLY_URL")
+            .unwrap_or_else(|_| c["url"].as_str().unwrap_or("http://localhost:8787").into())
+            .trim_end_matches('/')
+            .to_string();
+        let token = std::env::var("RALLY_TOKEN").unwrap_or_else(|_| opt(&c, "token").to_string());
+        Ok(Self {
+            url,
+            token,
+            http: reqwest::blocking::Client::builder()
+                .timeout(std::time::Duration::from_secs(180))
+                .build()?,
+        })
+    }
+    pub fn send(&self, path: &str, d: &Value) -> Result<Value> {
+        let r = self
+            .http
+            .post(format!("{}/{path}", self.url))
+            .bearer_auth(&self.token)
+            .json(d)
+            .send()
+            .with_context(|| format!("Connecting to {}", self.url))?;
+        let status = r.status();
+        let body: Value = r.json().context("Invalid server response")?;
+        if !status.is_success() {
+            bail!("{}", body["error"].as_str().unwrap_or(status.as_str()));
+        }
+        Ok(body)
+    }
+    pub fn api(&self, op: &str, d: &Value) -> Result<Value> {
+        self.send(&format!("api/{op}"), d)
+    }
+}
+
+const OPS: &[(&str, &str, &str)] = &[
+    ("topic.list", "", "List organisation topics"),
+    ("topic.create", "slug name", "Create a topic"),
+    (
+        "mission.list",
+        "topic archived local",
+        "List accessible or locally opened missions",
+    ),
+    ("mission.show", "mission", "Show a mission and its branches"),
+    (
+        "mission.create",
+        "topic title description",
+        "Create a mission",
+    ),
+    (
+        "mission.update",
+        "mission title description",
+        "Edit mission details",
+    ),
+    ("mission.archive", "mission", "Archive a mission"),
+    (
+        "mission.fork",
+        "mission title",
+        "Start a separate mission from its repositories",
+    ),
+    ("group.list", "", "List groups"),
+    ("group.create", "name", "Create a group"),
+    ("group.add", "group person", "Add a user to a group"),
+    ("group.remove", "group person", "Remove a user from a group"),
+    ("member.list", "mission", "List mission members"),
+    (
+        "member.add",
+        "mission principal",
+        "Grant access to the whole mission",
+    ),
+    (
+        "member.remove",
+        "mission principal",
+        "Remove a direct mission grant",
+    ),
+    ("account.invite", "email", "Invite a local user"),
+    ("account.service", "name", "Create a service user and token"),
+    ("people.list", "", "List organisation principals"),
+    ("token.create", "name", "Issue a personal API token"),
+    ("token.list", "", "List personal tokens"),
+    ("token.revoke", "id", "Revoke a token"),
+    ("repo.list", "mission", "List tracked branches"),
+    ("repo.status", "mission", "Inspect hosted checkout state"),
+    (
+        "repo.add",
+        "mission name remote branch",
+        "Track a Git branch",
+    ),
+    ("repo.remove", "mission name", "Remove a branch binding"),
+    ("repo.push", "mission name", "Push the current branch"),
+    (
+        "repo.return",
+        "mission name",
+        "Return to the original branch after manual reconciliation",
+    ),
+    ("thread.list", "mission", "List conversations"),
+    (
+        "thread.create",
+        "mission title",
+        "Start a hosted conversation",
+    ),
+    ("thread.rename", "thread title", "Rename a thread"),
+    (
+        "thread.subscribe",
+        "thread mode",
+        "Choose participating, all or muted",
+    ),
+    ("thread.mute", "thread", "Mute ordinary thread alerts"),
+    ("run.list", "mission", "List agent invocations"),
+    ("run.show", "run", "Inspect a run and its questions"),
+    ("run.follow", "run", "Follow a working agent"),
+    ("run.steer", "run body refs", "Steer an active invocation"),
+    ("run.stop", "run", "Stop an invocation"),
+    (
+        "run.answer",
+        "run question answer",
+        "Submit a structured answer",
+    ),
+    ("agent.list", "", "List roles"),
+    ("agent.show", "agent", "Read a role"),
+    (
+        "agent.create",
+        "name model instructions",
+        "Create an agent role",
+    ),
+    (
+        "agent.update",
+        "agent model instructions",
+        "Update a role on its next invocation",
+    ),
+    ("skill.list", "", "List managed skills"),
+    ("skill.show", "skill", "Read a skill"),
+    ("skill.create", "name body", "Author a Markdown skill"),
+    (
+        "skill.import",
+        "name remote ref path",
+        "Continuously import a skill from a Git remote on the server",
+    ),
+    ("skill.edit", "skill body", "Edit a GUI-authored skill"),
+    (
+        "skill.attach",
+        "skill target",
+        "Attach a skill to an agent or mission",
+    ),
+    ("skill.detach", "skill target", "Detach a skill"),
+    ("routine.list", "", "List your routines"),
+    (
+        "routine.show",
+        "routine",
+        "Inspect a routine and recent jobs",
+    ),
+    (
+        "routine.create",
+        "name command cron repos",
+        "Create a cron or webhook routine",
+    ),
+    (
+        "routine.update",
+        "routine name command cron repos",
+        "Edit a routine",
+    ),
+    ("routine.enable", "routine", "Enable a routine"),
+    ("routine.disable", "routine", "Disable a routine"),
+    ("routine.trigger", "routine payload", "Trigger a routine"),
+    ("routine.transfer", "routine person", "Transfer ownership"),
+    ("inbox.list", "", "Show notifications"),
+    ("inbox.read", "id", "Mark one or all notifications as read"),
+    ("whoami", "", "Show the current principal"),
+    (
+        "search",
+        "query mission limit offset",
+        "Search accessible conversations",
+    ),
+    ("read", "thread", "Read thread Markdown"),
+    ("pull", "thread output", "Export Markdown messages as YAML"),
+    (
+        "post",
+        "thread body mentions refs confirm key",
+        "Post a message and optionally dispatch agents",
+    ),
+    (
+        "open",
+        "mission print-path",
+        "Materialise a mission and register its root",
+    ),
+    ("path", "mission", "Print the local mission path"),
+    ("sync", "mission", "Refresh branch states"),
+    (
+        "wip",
+        "mission name thread summary fork",
+        "Commit hosted edits, optionally on a recovery branch",
+    ),
+    ("login", "email password token url", "Sign in to a server"),
+    ("logout", "", "End your session"),
+    (
+        "bootstrap",
+        "email name password code",
+        "Create the first organisation owner",
+    ),
+    (
+        "register",
+        "name email password code",
+        "Accept a local invitation",
+    ),
+    (
+        "config.set",
+        "key value",
+        "Set url or directory in this profile",
+    ),
+    ("shell-init", "shell", "Print shell integration"),
+    ("hooks.install", "adapter", "Install capture hooks"),
+    ("hooks.uninstall", "adapter", "Remove Rally capture hooks"),
+    (
+        "hooks.status",
+        "adapter",
+        "Inspect capture hook configuration",
+    ),
+    ("hooks.capture", "adapter", "Receive a native hook on stdin"),
+    ("hooks.flush", "", "Retry pending captures"),
+];
+
+fn cli() -> Command {
+    let mut root = Command::new("rally")
+        .version(env!("CARGO_PKG_VERSION"))
+        .about("Git workspaces and shared conversation context")
+        .subcommand_required(true)
+        .arg(
+            Arg::new("json")
+                .long("json")
+                .global(true)
+                .action(ArgAction::SetTrue)
+                .help("Print machine-readable JSON"),
+        );
+    let mut groups = std::collections::BTreeMap::new();
+    for &(op, keys, help) in OPS {
+        let (group, name) = op.split_once('.').unwrap_or(("", op));
+        let mut c = Command::new(name).about(help);
+        let positional = match op {
+            "open" | "path" | "mission.show" | "mission.update" | "mission.fork"
+            | "mission.archive" => Some("mission"),
+            "read" | "pull" => Some("thread"),
+            "search" => Some("query"),
+            "shell-init" => Some("shell"),
+            "hooks.install" | "hooks.uninstall" | "hooks.status" | "hooks.capture" => {
+                Some("adapter")
+            }
+            _ => None,
+        };
+        for key in keys.split_whitespace() {
+            let mut arg = Arg::new(key).long(match key {
+                "mentions" => "mention",
+                "refs" => "link",
+                k => k,
+            });
+            if ["confirm", "fork", "local", "archived", "print-path"].contains(&key) {
+                arg = arg.action(ArgAction::SetTrue);
+            }
+            if ["mentions", "refs"].contains(&key) {
+                arg = arg.action(ArgAction::Append);
+            }
+            c = c.arg(arg);
+        }
+        if let Some(label) = positional {
+            c = c.arg(Arg::new("positional").value_name(label.to_uppercase()));
+        }
+        if keys
+            .split_whitespace()
+            .any(|k| ["body", "instructions", "description"].contains(&k))
+        {
+            c = c.arg(
+                Arg::new("file")
+                    .long("file")
+                    .help("Read body, instructions or description from a file (or - for stdin)"),
+            );
+        }
+        if group.is_empty() {
+            root = root.subcommand(c);
+        } else {
+            let g = groups
+                .entry(group)
+                .or_insert_with(|| Command::new(group).subcommand_required(true));
+            *g = std::mem::take(g).subcommand(c);
+        }
+    }
+    root.subcommands(groups.into_values())
+}
+fn stdin() -> Result<String> {
+    let mut s = String::new();
+    io::stdin().read_to_string(&mut s)?;
+    Ok(s)
+}
+pub fn main() -> Result<()> {
+    let matches = cli().get_matches();
+    let (name, m) = matches.subcommand().unwrap();
+    let (op, m) = if let Some((sub, m)) = m.subcommand() {
+        (format!("{name}.{sub}"), m)
+    } else {
+        (name.to_string(), m)
+    };
+    let keys = OPS.iter().find(|(k, _, _)| k == &op).unwrap().1;
+    let mut d = json!({});
+    for key in keys.split_whitespace() {
+        if ["confirm", "fork", "local", "archived", "print-path"].contains(&key) {
+            if m.get_flag(key) {
+                d[key] = json!(true);
+            }
+        } else if ["mentions", "refs"].contains(&key) {
+            if let Some(v) = m.get_many::<String>(key) {
+                d[key] = json!(v.collect::<Vec<_>>());
+            }
+        } else if let Some(value) = m.get_one::<String>(key) {
+            d[key] = if ["repos", "answer", "payload", "offset", "limit"].contains(&key) {
+                serde_json::from_str(value)?
+            } else {
+                json!(value)
+            };
+        }
+    }
+    if let Ok(Some(pos)) = m.try_get_one::<String>("positional") {
+        d[keys.split_whitespace().next().unwrap()] = json!(pos);
+    }
+    if let Ok(Some(file)) = m.try_get_one::<String>("file") {
+        let key = keys
+            .split_whitespace()
+            .find(|k| ["body", "instructions", "description"].contains(k))
+            .unwrap();
+        d[key] = json!(if file == "-" {
+            stdin()?
+        } else {
+            std::fs::read_to_string(file)?
+        });
+    }
+    if op == "hooks.capture" {
+        return hooks::capture(field(&d, "adapter")?);
+    }
+    if op.starts_with("hooks.") && op != "hooks.flush" {
+        return hooks::manage(&op, field(&d, "adapter")?);
+    }
+    let client = Client::new()?;
+    let as_json = matches.get_flag("json");
+    let local = || workspace::current(&std::env::current_dir()?, &client.url);
+    if d["mission"].is_null()
+        && keys.split_whitespace().any(|k| k == "mission")
+        && op != "search"
+        && op != "mission.list"
+    {
+        d["mission"] = json!(std::env::var("RALLY_MISSION").ok().or(local()?));
+    }
+    if d["thread"].is_null() && keys.split_whitespace().any(|k| k == "thread") {
+        d["thread"] = json!(
+            std::env::var("RALLY_THREAD")
+                .ok()
+                .or(std::env::var("RALLY_MISSION").ok())
+                .or(local()?)
+        );
+    }
+    let result = match op.as_str() {
+        "config.set" => {
+            let key = field(&d, "key")?;
+            if !["directory", "url"].contains(&key) {
+                bail!("Expected directory or url");
+            }
+            let path = config_dir().join("config.json");
+            let mut c = read_json(&path)?;
+            if key == "url" && c["url"] != d["value"] {
+                c.as_object_mut().unwrap().remove("token");
+            }
+            c[key] = d["value"].clone();
+            write_json(&path, &c)?;
+            json!({"saved":key})
+        }
+        "shell-init" => {
+            println!("{}", workspace::shell(opt(&d, "shell"))?);
+            return Ok(());
+        }
+        "open" => {
+            let dir = workspace::open(&client, field(&d, "mission")?)?;
+            if d["print-path"] == true {
+                println!("{}", dir.display());
+            } else {
+                println!(
+                    "Mission ready.\ncd -- {}\nEnable shell integration with rally shell-init for your shell.",
+                    workspace::quote(&dir.to_string_lossy())
+                );
+            }
+            return Ok(());
+        }
+        "path" => {
+            println!(
+                "{}",
+                workspace::path(&client, field(&d, "mission")?)?.display()
+            );
+            return Ok(());
+        }
+        "mission.list" if d["local"] == true => workspace::registered(&client.url)?,
+        "hooks.flush" => json!({"sent":hooks::flush(&client)?}),
+        "login" | "bootstrap" | "register" => {
+            let mut c = read_json(&config_dir().join("config.json"))?;
+            let mut client = client;
+            if let Some(url) = d["url"].as_str() {
+                client.url = url.trim_end_matches('/').to_string();
+            }
+            if let Some(token) = d["token"].as_str() {
+                client.token = token.to_string();
+                client.api("whoami", &json!({}))?;
+            } else {
+                if d["password"].is_null() {
+                    d["password"] = json!(secret_input("Password")?);
+                }
+                d["cli"] = json!(true);
+                let r = client.send(&format!("auth/{op}"), &d)?;
+                client.token = field(&r, "token")?.into();
+            }
+            c["url"] = json!(client.url);
+            c["token"] = json!(client.token);
+            write_json(&config_dir().join("config.json"), &c)?;
+            client.api("whoami", &json!({}))?
+        }
+        "logout" => {
+            client.send("auth/logout", &json!({}))?;
+            let p = config_dir().join("config.json");
+            let mut c = read_json(&p)?;
+            c.as_object_mut().unwrap().remove("token");
+            write_json(&p, &c)?;
+            json!({"signed_out":true})
+        }
+        "read" => {
+            let t = client.api("read", &d)?;
+            if !as_json {
+                println!("{}", markdown(&t)?);
+                return Ok(());
+            }
+            t
+        }
+        "pull" => {
+            export(&client, &d)?;
+            return Ok(());
+        }
+        "sync" => {
+            let result = client.api("repo.sync", &d)?;
+            if workspace::path(&client, field(&d, "mission")?).is_ok() {
+                workspace::open(&client, field(&d, "mission")?)?;
+            }
+            result
+        }
+        "repo.status" => client.api("repo.list", &d)?,
+        "wip" => client.api("repo.wip", &d)?,
+        "thread.mute" => {
+            d["mode"] = json!("muted");
+            client.api("thread.subscribe", &d)?
+        }
+        "run.follow" => {
+            let mut printed = String::new();
+            loop {
+                let r = client.api("run.show", &d)?;
+                let text = opt(&r, "partial");
+                if let Some(rest) = text.strip_prefix(&printed) {
+                    print!("{rest}");
+                    io::stdout().flush()?;
+                }
+                printed = text.into();
+                if !["working", "queued", "interrupted", "stopping"].contains(&opt(&r, "status")) {
+                    println!("\n{}", r["status"]);
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(400));
+            }
+            return Ok(());
+        }
+        _ => {
+            if op == "post" && d["body"].is_null() {
+                d["body"] = json!(stdin()?);
+            }
+            client.api(&op, &d)?
+        }
+    };
+    if as_json {
+        println!("{}", serde_json::to_string(&result)?);
+    } else {
+        print_result(&result)?;
+    }
+    Ok(())
+}
+fn secret_input(label: &str) -> Result<String> {
+    eprint!("{label}: ");
+    io::stderr().flush()?;
+    let hidden = std::process::Command::new("stty")
+        .arg("-echo")
+        .status()
+        .is_ok_and(|s| s.success());
+    let mut line = String::new();
+    let result = io::stdin().read_line(&mut line);
+    if hidden {
+        let _ = std::process::Command::new("stty").arg("echo").status();
+        eprintln!();
+    }
+    result?;
+    Ok(line.trim_end().to_string())
+}
+fn print_result(value: &Value) -> Result<()> {
+    if let Some(rows) = value.as_array() {
+        for row in rows {
+            let key = row["reference"]
+                .as_str()
+                .or(row["id"].as_str())
+                .or(row["slug"].as_str())
+                .unwrap_or("");
+            let name = row["title"]
+                .as_str()
+                .or(row["name"].as_str())
+                .or(row["body"].as_str())
+                .or(row["summary"].as_str())
+                .unwrap_or("");
+            println!("{key}\t{name}");
+        }
+    } else {
+        print!("{}", serde_yaml_ng::to_string(value)?);
+    }
+    Ok(())
+}
+fn markdown(t: &Value) -> Result<String> {
+    let mut text = format!(
+        "# {} · {}\n",
+        field(&t["thread"], "mission")?,
+        field(&t["thread"], "title")?
+    );
+    for m in t["messages"].as_array().unwrap() {
+        text += &format!(
+            "\n## {} ({})\n\n{}\n",
+            opt(m, "author"),
+            opt(m, "source"),
+            opt(m, "body")
+        );
+    }
+    Ok(text)
+}
+fn transcript(t: &Value) -> Value {
+    let messages=t["messages"].as_array().unwrap().iter().map(|m|{
+        let mut row=json!({"source":format!("{} ({})",opt(m,"author"),opt(m,"source")),"message":m["body"]});
+        if m["commits"].as_object().is_some_and(|c|!c.is_empty()){row["commits"]=m["commits"].clone();}row
+    }).collect::<Vec<_>>();
+    json!({"mission":t["thread"]["mission"],"thread":t["thread"]["title"],"messages":messages})
+}
+fn export(c: &Client, d: &Value) -> Result<()> {
+    let reference = field(d, "thread")?;
+    let single = reference.contains(':') || reference.starts_with("th_");
+    let output = d["output"].as_str().map(PathBuf::from);
+    if single {
+        let yaml = serde_yaml_ng::to_string(&transcript(&c.api("read", d)?))?;
+        if let Some(p) = output {
+            std::fs::write(p, yaml)?;
+        } else {
+            print!("{yaml}");
+        }
+        return Ok(());
+    }
+    let m = c.api("mission.show", &json!({"mission":reference}))?;
+    let mut threads = vec![];
+    if let Some(p) = &output {
+        std::fs::create_dir_all(p)?;
+    }
+    for t in m["threads"].as_array().unwrap() {
+        let id = field(t, "id")?;
+        let doc = transcript(&c.api("read", &json!({"thread":id}))?);
+        if let Some(dir) = &output {
+            std::fs::write(
+                dir.join(format!("{id}.yaml")),
+                serde_yaml_ng::to_string(&doc)?,
+            )?;
+        } else {
+            threads.push(doc);
+        }
+    }
+    let manifest = json!({"mission":m["id"],"title":m["title"],"description":m["description"],"repos":m["repos"].as_array().unwrap().iter().map(|r|json!({"name":r["name"],"remote":r["remote"],"branch":r["branch"]})).collect::<Vec<_>>()});
+    if let Some(dir) = output {
+        std::fs::write(
+            dir.join("mission.yaml"),
+            serde_yaml_ng::to_string(&manifest)?,
+        )?;
+    } else {
+        print!(
+            "{}",
+            serde_yaml_ng::to_string(&json!({"mission":manifest,"threads":threads}))?
+        );
+    }
+    Ok(())
+}

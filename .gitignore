@@ -4,3 +4,7 @@
 /.rally-test*/
 /.env
 /__pycache__/
+
+/web/test-results/
+/web/playwright-report/
+/data/

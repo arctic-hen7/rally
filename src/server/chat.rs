@@ -126,7 +126,18 @@ async fn post(app: &App, a: &Actor, d: &Value) -> Result<Value> {
             }
         }
     }
-    let mut grants = json!({});
+    let (readers, mut grants) = if let Some(parent) = &a.run {
+        let r = sqlx::query("SELECT readers,grants FROM runs WHERE id=$1 AND status='working'")
+            .bind(parent)
+            .fetch_one(&mut *tx)
+            .await?;
+        (
+            r.get::<Vec<String>, _>("readers"),
+            r.get::<Value, _>("grants"),
+        )
+    } else {
+        (vec![a.uid.clone()], json!({}))
+    };
     for reference in strings(&d["refs"]) {
         let refdata = json!({"thread":reference});
         let linked = thread(app, a, &refdata, false).await?;
@@ -145,7 +156,7 @@ async fn post(app: &App, a: &Actor, d: &Value) -> Result<Value> {
             if implicit {
                 bail!("The agent is working. Mention it to steer or open the working pane.");
             }
-            sqlx::query("UPDATE runs SET readers=ARRAY(SELECT DISTINCT unnest(readers || ARRAY[$2::text])),grants=grants || $3 WHERE id=$1").bind(&r).bind(&a.uid).bind(&grants).execute(&mut *tx).await?;
+            sqlx::query("UPDATE runs SET readers=ARRAY(SELECT DISTINCT unnest(readers || $2::text[])),grants=grants || $3 WHERE id=$1").bind(&r).bind(&readers).bind(&grants).execute(&mut *tx).await?;
             sqlx::query("INSERT INTO run_inputs(run,message,kind) VALUES($1,$2,'steer')")
                 .bind(&r)
                 .bind(msg)
@@ -154,7 +165,7 @@ async fn post(app: &App, a: &Actor, d: &Value) -> Result<Value> {
             r
         } else {
             let r = id("run");
-            sqlx::query("INSERT INTO runs(id,session,dispatcher,trigger,status,readers,grants,model,instructions) SELECT $1,$2,$3,$4,'queued',ARRAY[$3::text],$5,model,instructions FROM agents WHERE id=$6").bind(&r).bind(&session).bind(&a.uid).bind(msg).bind(&grants).bind(&aid).execute(&mut *tx).await?;
+            sqlx::query("INSERT INTO runs(id,session,dispatcher,trigger,status,readers,grants,model,instructions) SELECT $1,$2,$3,$4,'queued',$7::text[],$5,model,instructions FROM agents WHERE id=$6").bind(&r).bind(&session).bind(&a.uid).bind(msg).bind(&grants).bind(&aid).bind(&readers).execute(&mut *tx).await?;
             r
         };
         runs.push(rid);

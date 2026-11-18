@@ -29,7 +29,10 @@ pub async fn call(app: &App, a: &Actor, op: &str, d: &Value) -> Result<Value> {
 }
 
 pub async fn deliver(app: &App) -> Result<()> {
-    let Ok(key) = std::env::var("RALLY_VAPID_PRIVATE") else {
+    let Some(key) = std::env::var("RALLY_VAPID_PRIVATE")
+        .ok()
+        .filter(|v| !v.is_empty())
+    else {
         return Ok(());
     };
     let jobs=sqlx::query("SELECT n.id,n.summary,n.thread,n.run,d.endpoint,d.subscription FROM notifications n JOIN threads t ON t.id=n.thread JOIN devices d ON d.person=n.person WHERE NOT n.seen AND can_read(n.person,t.mission) AND n.created>now()-interval '1 day' AND NOT EXISTS(SELECT 1 FROM push_deliveries p WHERE p.notification=n.id AND p.endpoint=d.endpoint) ORDER BY n.id LIMIT 32").fetch_all(&app.db).await?;
