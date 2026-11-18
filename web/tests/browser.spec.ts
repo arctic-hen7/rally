@@ -115,16 +115,16 @@ test('installed service worker displays a background agent notification', async 
     await context.grantPermissions(['notifications']);
     const origin = new URL(page.url()).origin;
     const cdp = await context.newCDPSession(page);
+    await page.waitForFunction(() => navigator.serviceWorker.controller?.state === 'activated');
     const registration = new Promise<string>((resolve) => {
-        cdp.on('ServiceWorker.workerRegistrationUpdated', ({ registrations }) => {
-            const current = registrations.find((r) => !r.isDeleted && r.scopeURL === origin + '/');
+        cdp.on('ServiceWorker.workerVersionUpdated', ({ versions }) => {
+            const current = versions.find(
+                (v) => v.scriptURL === origin + '/sw.js' && v.status === 'activated',
+            );
             if (current) resolve(current.registrationId);
         });
     });
     await cdp.send('ServiceWorker.enable');
-    await page.evaluate(async () => {
-        await navigator.serviceWorker.ready;
-    });
     await cdp.send('ServiceWorker.deliverPushMessage', {
         origin,
         registrationId: await registration,
@@ -140,4 +140,94 @@ test('installed service worker displays a background agent notification', async 
         )
         .toContain('Your agent has a question');
     await cdp.detach();
+});
+
+test('skill authoring page supports browser back, Markdown preview and editing', async ({ page }, info) => {
+    await page.getByRole('navigation').getByRole('button', { name: 'Skills' }).click();
+    await page.getByRole('button', { name: 'New skill', exact: true }).click();
+    await expect(page.getByRole('heading', { name: 'New skill' })).toBeVisible();
+    await page.goBack();
+    await expect(page.getByRole('heading', { name: 'Skills', exact: true })).toBeVisible();
+    await page.goForward();
+    await page.getByLabel('Skill name').fill('decision-journal');
+    await page.getByLabel('Description', { exact: true }).fill('Capture the reasons behind a decision.');
+    await page
+        .getByRole('textbox', { name: 'Instructions' })
+        .fill('## Decisions\nRecord the alternatives considered.');
+    await page.getByRole('button', { name: 'Preview', exact: true }).click();
+    await expect(page.getByRole('heading', { name: 'Decisions' })).toBeVisible();
+    await page.screenshot({ path: info.outputPath('skill-editor.png') });
+    await page.getByRole('button', { name: 'Create skill', exact: true }).click();
+    await page.getByRole('button', { name: /decision-journal/ }).click();
+    await page.getByRole('button', { name: 'Edit skill', exact: true }).click();
+    await expect(page.getByLabel('Description', { exact: true })).toHaveValue(
+        'Capture the reasons behind a decision.',
+    );
+    await expect(page.getByRole('textbox', { name: 'Instructions' })).toContainText('alternatives');
+});
+
+test('sidebar thread navigation, status changes and full-height footer hover', async ({ page }) => {
+    expect(
+        (
+            await page.request.post('/api/thread.create', { data: { mission, title: 'Sidebar test thread' } })
+        ).ok(),
+    ).toBeTruthy();
+    expect(
+        (
+            await page.request.post('/api/capture', {
+                data: {
+                    mission,
+                    title: 'Local review',
+                    source: 'codex',
+                    session: 'sidebar-session',
+                    role: 'user',
+                    key: 'initial',
+                    body: 'Context from the local checkout.',
+                },
+            })
+        ).ok(),
+    ).toBeTruthy();
+    const rename = await page.request.post('/api/thread.rename', {
+        data: { thread: mission, title: 'Release planning' },
+    });
+    expect(rename.ok()).toBeTruthy();
+    await page.goto('/#mission/' + mission);
+    await expect(page.getByRole('heading', { name: title })).toBeVisible();
+    await expect(page.locator('.thread-bar .tab.active')).toHaveAccessibleName('Release planning');
+    await expect(page.locator('.thread-bar .tab.active .default-star')).toBeVisible();
+    await expect(page.locator('.thread-bar .tab.active')).toHaveAttribute(
+        'aria-description',
+        'Default thread',
+    );
+    const tree = page.locator('.mission-tree').filter({ has: page.locator('button[aria-current="page"]') });
+    await tree.getByRole('button', { name: 'Show conversations in ' + title }).click();
+    await tree.getByRole('button', { name: 'Sidebar test thread', exact: true }).click();
+    await expect(page.locator('.thread-bar .tab.active')).toHaveText('Sidebar test thread');
+    await tree.locator('summary').filter({ hasText: 'External sessions' }).click();
+    await tree.getByRole('button', { name: 'Local review', exact: true }).click();
+    await expect(page.locator('.timeline')).toContainText('Context from the local checkout.');
+    await page.getByLabel('Mission status').selectOption('in-progress');
+    await expect(page.getByLabel('Mission status')).toHaveValue('in-progress');
+    const profile = page.locator('button.profile');
+    await profile.hover();
+    const bottom = await profile.evaluate((e) => ({
+        row: e.getBoundingClientRect().bottom,
+        sidebar: e.closest('aside')!.getBoundingClientRect().bottom,
+    }));
+    expect(Math.abs(bottom.row - bottom.sidebar)).toBeLessThan(1);
+});
+
+test('workspace settings save a status color and the new agent page supplies its model', async ({ page }) => {
+    await page.getByRole('navigation').getByRole('button', { name: 'Agents' }).click();
+    await page.getByRole('button', { name: 'New agent', exact: true }).click();
+    await expect(page.getByLabel('Model', { exact: true })).toHaveValue('gpt-6.2-sol');
+    await page.getByRole('button', { name: 'Cancel' }).click();
+    await page.locator('button.profile').click();
+    await page.getByRole('button', { name: 'New status' }).click();
+    await page.getByLabel('Status name').fill('Ready to publish');
+    await page.getByRole('radio', { name: 'Rose' }).check();
+    await page.getByRole('button', { name: 'Create status' }).click();
+    await expect(
+        page.locator('.setting-line').filter({ hasText: 'Ready to publish' }).locator('.status-dot.rose'),
+    ).toBeVisible();
 });

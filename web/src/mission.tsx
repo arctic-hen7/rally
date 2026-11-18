@@ -27,6 +27,7 @@ import {
     RefreshCw,
     Send,
     SquarePen,
+    Star,
     Terminal,
     Users,
     X,
@@ -229,7 +230,6 @@ export function Mission({
             initial: { mission: m.id },
             fields: [required('title', 'Thread title')],
             submit: 'Create thread',
-            after: (r: any) => openThread(r.id),
         });
     return (
         <div className="mission-layout">
@@ -275,6 +275,27 @@ export function Mission({
                     <h1>{m.title}</h1>
                     {m.description && <p>{m.description}</p>}
                     <div className="mission-meta">
+                        <label className="status-picker">
+                            <i
+                                className={
+                                    'status-dot ' +
+                                    (all.statuses.find((s: any) => s.id === m.status)?.color || 'slate')
+                                }
+                            />
+                            <select
+                                aria-label="Mission status"
+                                value={m.status}
+                                onChange={(e) =>
+                                    act('mission.update', { mission: m.id, status: e.target.value })
+                                }
+                            >
+                                {all.statuses.map((s: any) => (
+                                    <option key={s.id} value={s.id}>
+                                        {s.name}
+                                    </option>
+                                ))}
+                            </select>
+                        </label>
                         <button
                             onClick={() => {
                                 setDetails(true);
@@ -300,6 +321,8 @@ export function Mission({
                     <div className="popover-anchor">
                         <button
                             className="tab active"
+                            aria-label={t.thread.title}
+                            aria-description={t.thread.kind === 'main' ? 'Default thread' : undefined}
                             onClick={() => {
                                 setThreads(!threads);
                                 setExternal(false);
@@ -307,6 +330,11 @@ export function Mission({
                         >
                             <MessageSquare />
                             {t.thread.title}
+                            {t.thread.kind === 'main' && (
+                                <Star className="default-star">
+                                    <title>Default thread</title>
+                                </Star>
+                            )}
                             <ChevronDown size={13} />
                         </button>
                         {threads && (
@@ -317,6 +345,11 @@ export function Mission({
                                         <button key={x.id} onClick={() => openThread(x.id)}>
                                             <MessageSquare />
                                             {x.title}
+                                            {x.kind === 'main' && (
+                                                <Star className="default-star">
+                                                    <title>Default thread</title>
+                                                </Star>
+                                            )}
                                             {x.id === tid && <Check />}
                                         </button>
                                     ))}

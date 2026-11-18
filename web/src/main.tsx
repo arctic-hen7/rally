@@ -33,12 +33,14 @@ import {
     X,
 } from 'lucide-react';
 import { api, Auth, Avatar, Brand, choice, Editor, Form, IconButton, Modal, options, required } from './ui';
+import { MissionNav } from './mission-nav';
 import { Mission } from './mission';
 import { Manage } from './manage';
 import './styles.css';
 
 const empty = {
     topics: [],
+    statuses: [],
     missions: [],
     agents: [],
     people: [],
@@ -85,6 +87,7 @@ function App() {
         let live = true;
         const entries = [
             ['topics', 'topic.list'],
+            ['statuses', 'status.list'],
             ['missions', 'mission.list'],
             ['agents', 'agent.list'],
             ['people', 'people.list'],
@@ -123,7 +126,13 @@ function App() {
     }, [me]);
     useEffect(() => {
         function route() {
-            const [kind, key, _, rid] = location.hash.slice(1).split('/').map(decodeURIComponent);
+            const address = location.hash;
+            setForm(history.state?.rallyForm || null);
+            const [kind, key, _, rid] = location.hash
+                .slice(1)
+                .split('?')[0]
+                .split('/')
+                .map(decodeURIComponent);
             setSidebar(false);
             setDetails(false);
             setRun(rid || '');
@@ -132,7 +141,7 @@ function App() {
                 setTid(key);
                 api('thread.show', { thread: key })
                     .then((x) => {
-                        setMid(x.thread.mission);
+                        if (location.hash === address) setMid(x.thread.mission);
                     })
                     .catch((e) => setError(e.message));
             } else if (kind === 'mission' && key) {
@@ -224,8 +233,14 @@ function App() {
             setError(e.message);
         }
     };
+    const openForm = (next: Form) => {
+        const from = location.hash.split('?')[0] || '#' + page;
+        history.pushState({ rallyForm: next }, '', from + '?form=' + encodeURIComponent(next.op!));
+        setSidebar(false);
+        setForm(next);
+    };
     const newTopic = () =>
-        setForm({
+        openForm({
             title: 'New topic',
             op: 'topic.create',
             fields: [required('name', 'Topic name'), required('slug', 'Mission key prefix')],
@@ -233,7 +248,7 @@ function App() {
         });
     const newMission = (topic?: string) => {
         if (!all.topics.length) {
-            setForm({
+            openForm({
                 title: 'Create your first mission',
                 fields: [
                     required('topicName', 'Topic name'),
@@ -242,15 +257,11 @@ function App() {
                 ],
                 initial: { topicName: 'Engineering', slug: 'dev' },
                 submit: 'Create mission',
-                save: async (d) => {
-                    const top = await api('topic.create', { name: d.topicName, slug: d.slug });
-                    return api('mission.create', { topic: top.slug, title: d.title });
-                },
-                after: (r) => selectMission(r.id),
+                op: 'mission.bootstrap',
             });
             return;
         }
-        setForm({
+        openForm({
             title: 'New mission',
             op: 'mission.create',
             fields: [
@@ -260,7 +271,6 @@ function App() {
             ],
             initial: { topic: topic || all.topics[0].slug },
             submit: 'Create mission',
-            after: (r) => selectMission(r.id),
         });
     };
     const navs = [
@@ -332,7 +342,13 @@ function App() {
                                 >
                                     {collapsed.includes(topic.slug) ? <ChevronRight /> : <ChevronDown />}
                                     <span className="topic-square" />
-                                    {topic.name}
+                                    <span className="topic-name">{topic.name}</span>
+                                    <code className="topic-key" title={topic.slug.toUpperCase()}>
+                                        ({topic.slug.toUpperCase()})
+                                    </code>
+                                    <small className="topic-count" title="Missions">
+                                        {all.missions.filter((row: any) => row.topic === topic.slug).length}
+                                    </small>
                                 </button>
                                 <IconButton
                                     title={'New mission in ' + topic.name}
@@ -344,19 +360,19 @@ function App() {
                             {!collapsed.includes(topic.slug) &&
                                 all.missions
                                     .filter((m: any) => m.topic === topic.slug)
-                                    .map((m: any) => (
-                                        <button
-                                            title={m.title}
-                                            key={m.id}
-                                            className={
-                                                'mission-link ' +
-                                                (page === 'Mission' && mid === m.id ? 'selected' : '')
+                                    .map((row: any) => (
+                                        <MissionNav
+                                            key={row.id}
+                                            mission={row}
+                                            active={page === 'Mission' && mid === row.id}
+                                            thread={t?.thread?.id}
+                                            revision={rev}
+                                            focusedThreads={
+                                                page === 'Mission' && m?.id === row.id ? m.threads : undefined
                                             }
-                                            onClick={() => selectMission(m.id)}
-                                        >
-                                            <CircleDot />
-                                            {m.title}
-                                        </button>
+                                            openMission={selectMission}
+                                            openThread={selectThread}
+                                        />
                                     ))}
                         </div>
                     ))}
@@ -396,134 +412,154 @@ function App() {
                         </IconButton>
                     </div>
                 )}
-                {page === 'Mission' && m?.id === mid && t?.thread?.mission === mid ? (
-                    <Mission
-                        key={mid}
-                        m={m}
-                        t={t}
-                        all={all}
-                        me={me}
-                        edit={setForm}
-                        act={act}
-                        refresh={refresh}
-                        selectThread={selectThread}
-                        run={run}
-                        setRun={setRun}
-                        details={details}
-                        setDetails={setDetails}
-                    />
-                ) : page === 'Missions' ? (
-                    <section className="page">
-                        <div className="page-title">
-                            <h1>Missions</h1>
-                            <button className="primary" onClick={() => newMission()}>
-                                <Plus />
-                                New mission
-                            </button>
-                        </div>
-                        {!all.missions.length && (
-                            <div className="empty">
-                                <span className="empty-icon">
-                                    <Flag />
-                                </span>
-                                <h3>No missions yet</h3>
-                                <button onClick={() => newMission()}>Create your first mission</button>
+                <div className="page-content" hidden={!!form}>
+                    {page === 'Mission' && m?.id === mid && t?.thread?.mission === mid ? (
+                        <Mission
+                            key={mid}
+                            m={m}
+                            t={t}
+                            all={all}
+                            me={me}
+                            edit={openForm}
+                            act={act}
+                            refresh={refresh}
+                            selectThread={selectThread}
+                            run={run}
+                            setRun={setRun}
+                            details={details}
+                            setDetails={setDetails}
+                        />
+                    ) : page === 'Missions' ? (
+                        <section className="page">
+                            <div className="page-title">
+                                <h1>Missions</h1>
+                                <button className="primary" onClick={() => newMission()}>
+                                    <Plus />
+                                    New mission
+                                </button>
                             </div>
-                        )}
-                        {all.topics.map((top: any) => {
-                            const missions = all.missions.filter((m: any) => m.topic === top.slug);
-                            return (
-                                <section className="mission-group" key={top.slug}>
-                                    <header>
-                                        <span className="topic-square" />
-                                        <b>{top.name}</b>
-                                        <span className="count">{missions.length}</span>
-                                        <div className="spacer" />
-                                        <IconButton
-                                            title={'Add mission to ' + top.name}
-                                            onClick={() => newMission(top.slug)}
-                                        >
-                                            <Plus />
-                                        </IconButton>
-                                    </header>
-                                    {missions.map((m: any) => (
-                                        <button
-                                            className="mission-record"
-                                            key={m.id}
-                                            onClick={() => selectMission(m.id)}
-                                        >
-                                            <CircleDot />
-                                            <code>{m.id.toUpperCase()}</code>
-                                            <span>{m.title}</span>
-                                            <ChevronRight />
-                                        </button>
-                                    ))}
-                                </section>
-                            );
-                        })}
-                    </section>
-                ) : page === 'Inbox' ? (
-                    <section className="page">
-                        <div className="page-title">
-                            <h1>Inbox</h1>
-                            <button onClick={() => act('inbox.read', {})}>
-                                <Check />
-                                Mark all read
-                            </button>
-                        </div>
-                        {!all.inbox.length && (
-                            <div className="empty">
-                                <span className="empty-icon">
-                                    <Inbox />
-                                </span>
-                                <h3>You’re all caught up</h3>
-                                <p>Mentions, agent questions and results appear here.</p>
+                            {!all.missions.length && (
+                                <div className="empty">
+                                    <span className="empty-icon">
+                                        <Flag />
+                                    </span>
+                                    <h3>No missions yet</h3>
+                                    <button onClick={() => newMission()}>Create your first mission</button>
+                                </div>
+                            )}
+                            {all.topics.map((top: any) => {
+                                const missions = all.missions.filter((m: any) => m.topic === top.slug);
+                                return (
+                                    <section className="mission-group" key={top.slug}>
+                                        <header>
+                                            <span className="topic-square" />
+                                            <b>{top.name}</b>
+                                            <span className="count">{missions.length}</span>
+                                            <div className="spacer" />
+                                            <IconButton
+                                                title={'Add mission to ' + top.name}
+                                                onClick={() => newMission(top.slug)}
+                                            >
+                                                <Plus />
+                                            </IconButton>
+                                        </header>
+                                        {missions.map((m: any) => (
+                                            <button
+                                                className="mission-record"
+                                                key={m.id}
+                                                onClick={() => selectMission(m.id)}
+                                            >
+                                                <CircleDot />
+                                                <code>{m.id.toUpperCase()}</code>
+                                                <span>{m.title}</span>
+                                                <small className="record-status">
+                                                    {all.statuses.find((s: any) => s.id === m.status)?.name}
+                                                </small>
+                                                <ChevronRight />
+                                            </button>
+                                        ))}
+                                    </section>
+                                );
+                            })}
+                        </section>
+                    ) : page === 'Inbox' ? (
+                        <section className="page">
+                            <div className="page-title">
+                                <h1>Inbox</h1>
+                                <button onClick={() => act('inbox.read', {})}>
+                                    <Check />
+                                    Mark all read
+                                </button>
                             </div>
-                        )}
-                        {all.inbox.map((n: any) => (
-                            <button
-                                className={'inbox-row ' + (n.seen ? '' : 'unread')}
-                                key={n.id}
-                                onClick={() => {
-                                    act('inbox.read', { id: String(n.id) });
-                                    nav('thread/' + n.thread + (n.run ? '/run/' + n.run : ''));
-                                }}
-                            >
-                                <Bell />
-                                <span>
-                                    <b>{n.summary}</b>
-                                    <small>
-                                        #{n.mission} · {n.title}
-                                    </small>
-                                </span>
-                                <time>{new Date(n.created).toLocaleDateString()}</time>
-                            </button>
-                        ))}
-                    </section>
-                ) : page === 'Mission' ? (
-                    <div className="page muted">Loading mission…</div>
-                ) : (
-                    <Manage
-                        page={page}
-                        data={all}
-                        user={me}
-                        edit={setForm}
-                        act={act}
-                        revision={rev}
-                        exit={async () => {
-                            const registration = await navigator.serviceWorker?.getRegistration();
-                            const device = await registration?.pushManager?.getSubscription();
-                            if (device) {
-                                await api('device.unsubscribe', { endpoint: device.endpoint });
-                                await device.unsubscribe();
-                            }
-                            await api('logout', {}, true);
-                            setMe(null);
+                            {!all.inbox.length && (
+                                <div className="empty">
+                                    <span className="empty-icon">
+                                        <Inbox />
+                                    </span>
+                                    <h3>You’re all caught up</h3>
+                                    <p>Mentions, agent questions and results appear here.</p>
+                                </div>
+                            )}
+                            {all.inbox.map((n: any) => (
+                                <button
+                                    className={'inbox-row ' + (n.seen ? '' : 'unread')}
+                                    key={n.id}
+                                    onClick={() => {
+                                        act('inbox.read', { id: String(n.id) });
+                                        nav('thread/' + n.thread + (n.run ? '/run/' + n.run : ''));
+                                    }}
+                                >
+                                    <Bell />
+                                    <span>
+                                        <b>{n.summary}</b>
+                                        <small>
+                                            #{n.mission} · {n.title}
+                                        </small>
+                                    </span>
+                                    <time>{new Date(n.created).toLocaleDateString()}</time>
+                                </button>
+                            ))}
+                        </section>
+                    ) : page === 'Mission' ? (
+                        <div className="page muted">Loading mission…</div>
+                    ) : (
+                        <Manage
+                            page={page}
+                            data={all}
+                            user={me}
+                            edit={openForm}
+                            act={act}
+                            revision={rev}
+                            exit={async () => {
+                                const registration = await navigator.serviceWorker?.getRegistration();
+                                const device = await registration?.pushManager?.getSubscription();
+                                if (device) {
+                                    await api('device.unsubscribe', { endpoint: device.endpoint });
+                                    await device.unsubscribe();
+                                }
+                                await api('logout', {}, true);
+                                setMe(null);
+                            }}
+                        />
+                    )}
+                </div>
+                {form && (
+                    <Editor
+                        key={form.op}
+                        form={form}
+                        parent={page === 'Mission' ? m?.title || 'mission' : page}
+                        changed={refresh}
+                        close={() => history.back()}
+                        saved={(result) => {
+                            if (['mission.bootstrap', 'mission.create', 'thread.create'].includes(form.op!)) {
+                                const target = form.op === 'thread.create' ? 'thread' : 'mission';
+                                history.replaceState(null, '', '#' + target + '/' + result.id);
+                                window.dispatchEvent(new HashChangeEvent('hashchange'));
+                            } else history.back();
                         }}
                     />
                 )}
             </main>
-            {form && <Editor key={form.title} form={form} close={() => setForm(null)} changed={refresh} />}
             {search && (
                 <Modal title="Search" wide onClose={() => setSearch(false)}>
                     <div className="search-box">

@@ -19,6 +19,27 @@ import {
 } from 'lucide-react';
 import { api, Avatar, Body, choice, Data, Form, IconButton, options, required, Section } from './ui';
 
+const skillFields = [
+    required('name', 'Skill name'),
+    required('description', 'Description'),
+    required('body', 'Instructions', 'markdown'),
+];
+const accountRoles = [
+    { value: 'member', label: 'Member' },
+    { value: 'admin', label: 'Admin' },
+];
+const statusFields = [
+    required('name', 'Status name'),
+    {
+        key: 'color',
+        label: 'Color',
+        type: 'swatches',
+        options: ['slate', 'blue', 'teal', 'amber', 'violet', 'rose', 'green'].map((value) => ({
+            value,
+            label: value[0].toUpperCase() + value.slice(1),
+        })),
+    },
+];
 export const roleFields = [
     required('name', 'Agent handle'),
     required('model', 'Model'),
@@ -73,15 +94,14 @@ export function Manage({ page, data, edit, act, user, revision, selectMission, e
                 title: 'New agent',
                 op: 'agent.create',
                 fields: roleFields,
-                initial: { model: 'gpt-6.2-luna' },
+                initial: { model: 'gpt-6.2-sol' },
                 submit: 'Create agent',
             });
         if (page === 'Skills')
             edit({
                 title: 'New skill',
                 op: 'skill.create',
-                fields: [required('name', 'Skill name'), required('body', 'SKILL.md', 'area')],
-                initial: { body: '---\nname: \ndescription: \n---\n' },
+                fields: skillFields,
                 submit: 'Create skill',
             });
         if (page === 'Routines')
@@ -136,7 +156,9 @@ export function Manage({ page, data, edit, act, user, revision, selectMission, e
                         <Avatar name={user.name} />
                         <div>
                             <b>{user.name}</b>
-                            <small>{user.owner ? 'Organisation owner' : 'Member'}</small>
+                            <small>
+                                {user.owner ? 'Organisation owner' : user.admin ? 'Admin' : 'Member'}
+                            </small>
                         </div>
                     </div>
                     <button
@@ -187,21 +209,106 @@ export function Manage({ page, data, edit, act, user, revision, selectMission, e
                     ))}
                     <small>Applies to all your subscribed devices.</small>
                 </Section>
-                {user.owner && (
-                    <Section title="Organisation">
-                        <div className="button-wrap">
+                {(user.owner || user.admin) && (
+                    <Section
+                        title="Mission statuses"
+                        action={
                             <button
                                 onClick={() =>
                                     edit({
-                                        title: 'Invite a teammate',
-                                        op: 'account.invite',
-                                        fields: [required('email', 'Email', 'email')],
-                                        reveal: 'code',
+                                        title: 'New mission status',
+                                        op: 'status.create',
+                                        fields: statusFields,
+                                        submit: 'Create status',
                                     })
                                 }
                             >
-                                Invite user
+                                <Plus />
+                                New status
                             </button>
+                        }
+                    >
+                        {data.statuses.map((status: any) => (
+                            <div className="setting-line" key={status.id}>
+                                <i className={'status-dot ' + status.color} />
+                                <strong>{status.name}</strong>
+                                {status.id === 'open' && <small>Initial status</small>}
+                                <span className="spacer" />
+                                <button
+                                    onClick={() =>
+                                        edit({
+                                            title: 'Edit mission status',
+                                            op: 'status.update',
+                                            initial: {
+                                                status: status.id,
+                                                name: status.name,
+                                                color: status.color,
+                                            },
+                                            fields: statusFields,
+                                        })
+                                    }
+                                >
+                                    Edit
+                                </button>
+                                {status.id !== 'open' && (
+                                    <button onClick={() => act('status.remove', { status: status.id })}>
+                                        Remove
+                                    </button>
+                                )}
+                            </div>
+                        ))}
+                    </Section>
+                )}
+                {user.owner && (
+                    <Section title="Account roles">
+                        {data.people
+                            .filter((p: any) => p.kind === 'user')
+                            .map((p: any) => (
+                                <div key={p.id} className="setting-line">
+                                    <Avatar name={p.name} small />
+                                    <strong>{p.name}</strong>
+                                    <span className="spacer" />
+                                    {p.owner ? (
+                                        <small>Organisation owner</small>
+                                    ) : (
+                                        <select
+                                            aria-label={'Role for ' + p.name}
+                                            value={p.admin ? 'admin' : 'member'}
+                                            onChange={(e) =>
+                                                act('account.role', { person: p.id, role: e.target.value })
+                                            }
+                                        >
+                                            {accountRoles.map((r) => (
+                                                <option key={r.value} value={r.value}>
+                                                    {r.label}
+                                                </option>
+                                            ))}
+                                        </select>
+                                    )}
+                                </div>
+                            ))}
+                    </Section>
+                )}
+                {(user.owner || user.admin) && (
+                    <Section title="Organisation">
+                        <div className="button-wrap">
+                            {user.owner && (
+                                <button
+                                    onClick={() =>
+                                        edit({
+                                            title: 'Invite a teammate',
+                                            op: 'account.invite',
+                                            fields: [
+                                                required('email', 'Email', 'email'),
+                                                choice('role', 'Account role', accountRoles),
+                                            ],
+                                            reveal: 'code',
+                                        })
+                                    }
+                                >
+                                    Invite user
+                                </button>
+                            )}
                             <button
                                 onClick={() =>
                                     edit({
@@ -323,6 +430,7 @@ export function Manage({ page, data, edit, act, user, revision, selectMission, e
                                 <b>{r.name}</b>
                                 <small>
                                     {r.model ||
+                                        r.description ||
                                         r.remote ||
                                         r.cron ||
                                         (page === 'Skills' ? 'Workspace skill' : 'Webhook')}
@@ -361,7 +469,7 @@ export function Manage({ page, data, edit, act, user, revision, selectMission, e
                                 <Section title="Instructions">
                                     <Body text={details.instructions} />
                                 </Section>
-                                {(details.creator === user.id || user.owner) && (
+                                {(details.creator === user.id || user.owner || user.admin) && (
                                     <button
                                         onClick={() =>
                                             edit({
@@ -379,6 +487,7 @@ export function Manage({ page, data, edit, act, user, revision, selectMission, e
                         ) : page === 'Skills' ? (
                             <>
                                 <Section title="Skill">
+                                    <p>{details.description}</p>
                                     <Body text={details.body} />
                                 </Section>
                                 {details.remote ? (
@@ -393,8 +502,13 @@ export function Manage({ page, data, edit, act, user, revision, selectMission, e
                                             edit({
                                                 title: 'Edit skill',
                                                 op: 'skill.edit',
-                                                initial: { skill: selected, body: details.body },
-                                                fields: [required('body', 'SKILL.md', 'area')],
+                                                initial: {
+                                                    skill: selected,
+                                                    name: details.name,
+                                                    description: details.description,
+                                                    body: details.body,
+                                                },
+                                                fields: skillFields,
                                             })
                                         }
                                     >

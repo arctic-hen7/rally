@@ -1,5 +1,6 @@
+import { MarkdownField } from './markdown-editor';
 import React, { useEffect, useRef, useState } from 'react';
-import { ArrowUpRight, Check, ChevronDown, Copy, LoaderCircle, X } from 'lucide-react';
+import { ArrowLeft, ArrowUpRight, Check, ChevronDown, Copy, LoaderCircle, X } from 'lucide-react';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 
@@ -161,11 +162,22 @@ export type Form = {
     op?: string;
     initial?: Data;
     submit?: string;
-    save?: (d: Data) => Promise<any>;
+
     reveal?: string;
-    after?: (d: Data) => void;
 };
-export function Editor({ form, close, changed }: { form: Form; close: () => void; changed: () => void }) {
+export function Editor({
+    form,
+    close,
+    changed,
+    saved,
+    parent,
+}: {
+    form: Form;
+    close: () => void;
+    changed: () => void;
+    saved: (r: Data) => void;
+    parent: string;
+}) {
     const [data, setData] = useState<Data>({
         ...Object.fromEntries(
             form.fields.filter((f) => f.options?.length).map((f) => [f.key, f.options![0].value]),
@@ -182,11 +194,17 @@ export function Editor({ form, close, changed }: { form: Form; close: () => void
         try {
             const send = { ...data };
             for (const f of form.fields) if (f.type === 'json') send[f.key] = JSON.parse(send[f.key] || '[]');
-            const r = form.save ? await form.save(send) : await api(form.op!, send);
+            if (form.fields.some((f) => f.type === 'markdown' && f.required && !send[f.key]?.trim()))
+                throw Error('Write the skill instructions before saving.');
+            if (form.op === 'mission.bootstrap') {
+                const topic = await api('topic.create', { slug: send.slug, name: send.topicName });
+                send.topic = topic.slug;
+            }
+            const r = await api(form.op === 'mission.bootstrap' ? 'mission.create' : form.op!, send);
             changed();
-            form.after?.(r);
+
             if (form.reveal && r[form.reveal]) setSecret(r[form.reveal]);
-            else close();
+            else saved(r);
         } catch (e: any) {
             setError(e.message);
         } finally {
@@ -194,68 +212,103 @@ export function Editor({ form, close, changed }: { form: Form; close: () => void
         }
     }
     return (
-        <Modal title={form.title} onClose={close}>
-            {secret ? (
-                <div className="form">
-                    <p>Copy this value before closing.</p>
-                    <code className="secret">{secret}</code>
-                    <button onClick={() => navigator.clipboard.writeText(secret)}>
-                        <Copy />
-                        Copy
-                    </button>
-                </div>
-            ) : (
-                <form className="form" onSubmit={submit}>
-                    {form.fields.map((f) => (
-                        <label key={f.key}>
-                            {f.label}
-                            {f.options ? (
-                                <select
-                                    value={data[f.key] ?? ''}
-                                    onChange={(e) => setData({ ...data, [f.key]: e.target.value })}
-                                >
-                                    {f.options.map((o) => (
-                                        <option key={o.value} value={o.value}>
-                                            {o.label}
-                                        </option>
-                                    ))}
-                                </select>
-                            ) : f.type === 'area' || f.type === 'json' ? (
-                                <textarea
-                                    required={f.required}
-                                    placeholder={f.placeholder}
-                                    rows={5}
-                                    value={data[f.key] ?? ''}
-                                    onChange={(e) => setData({ ...data, [f.key]: e.target.value })}
-                                />
-                            ) : (
-                                <input
-                                    required={f.required}
-                                    type={f.type || 'text'}
-                                    placeholder={f.placeholder}
-                                    value={data[f.key] ?? ''}
-                                    onChange={(e) => setData({ ...data, [f.key]: e.target.value })}
-                                />
-                            )}
-                        </label>
-                    ))}
-                    {error && (
-                        <p role="alert" className="error">
-                            {error}
-                        </p>
-                    )}
-                    <div className="form-actions">
-                        <button type="button" onClick={close}>
-                            Cancel
-                        </button>
-                        <button className="primary" disabled={busy}>
-                            {busy ? <LoaderCircle className="spin" /> : <Check />}
-                            {form.submit || 'Save'}
+        <section className="editor-page">
+            <div className="editor-inner">
+                <button className="editor-back" type="button" onClick={close}>
+                    <ArrowLeft />
+                    Back to {parent}
+                </button>
+                <h1>{form.title}</h1>
+                {secret ? (
+                    <div className="form">
+                        <p>Copy this value before closing.</p>
+                        <code className="secret">{secret}</code>
+                        <button onClick={() => navigator.clipboard.writeText(secret)}>
+                            <Copy />
+                            Copy
                         </button>
                     </div>
-                </form>
-            )}
-        </Modal>
+                ) : (
+                    <form className="form" onSubmit={submit}>
+                        {form.fields.map((f) =>
+                            f.type === 'markdown' ? (
+                                <div key={f.key} className="editor-field">
+                                    <span>{f.label}</span>
+                                    <MarkdownField
+                                        label={f.label}
+                                        value={data[f.key] || ''}
+                                        change={(v) => setData((old) => ({ ...old, [f.key]: v }))}
+                                    />
+                                </div>
+                            ) : f.type === 'swatches' ? (
+                                <fieldset className="swatches" key={f.key}>
+                                    <legend>{f.label}</legend>
+                                    {f.options?.map((o) => (
+                                        <label key={o.value}>
+                                            <input
+                                                type="radio"
+                                                name={f.key}
+                                                aria-label={o.label}
+                                                checked={data[f.key] === o.value}
+                                                onChange={() => setData({ ...data, [f.key]: o.value })}
+                                            />
+                                            <span aria-hidden="true" className={'status-dot ' + o.value} />
+                                            {o.label}
+                                        </label>
+                                    ))}
+                                </fieldset>
+                            ) : (
+                                <label key={f.key}>
+                                    {f.label}
+                                    {f.options ? (
+                                        <select
+                                            value={data[f.key] ?? ''}
+                                            onChange={(e) => setData({ ...data, [f.key]: e.target.value })}
+                                        >
+                                            {f.options.map((o) => (
+                                                <option key={o.value} value={o.value}>
+                                                    {o.label}
+                                                </option>
+                                            ))}
+                                        </select>
+                                    ) : f.type === 'area' || f.type === 'json' ? (
+                                        <textarea
+                                            required={f.required}
+                                            placeholder={f.placeholder}
+                                            rows={5}
+                                            value={data[f.key] ?? ''}
+                                            onChange={(e) => setData({ ...data, [f.key]: e.target.value })}
+                                        />
+                                    ) : (
+                                        <input
+                                            required={f.required}
+                                            type={f.type || 'text'}
+                                            placeholder={f.placeholder}
+                                            value={data[f.key] ?? ''}
+                                            onChange={(e) => setData({ ...data, [f.key]: e.target.value })}
+                                        />
+                                    )}
+                                </label>
+                            ),
+                        )}
+                        {error && (
+                            <p role="alert" className="error">
+                                {error}
+                            </p>
+                        )}
+                        <div className="form-actions">
+                            <button type="button" onClick={close}>
+                                Cancel
+                            </button>
+                            <button className="primary" disabled={busy}>
+                                {busy ? <LoaderCircle className="spin" /> : <Check />}
+                                {form.submit || 'Save'}
+                            </button>
+                        </div>
+                    </form>
+                )}
+            </div>
+        </section>
     );
 }
 export function Auth({ done }: { done: () => void }) {
