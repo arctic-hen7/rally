@@ -105,6 +105,17 @@ export function Mission({
     const active = t.runs.filter((r: any) =>
         ['working', 'queued', 'interrupted', 'stopping'].includes(r.status),
     );
+    const observed = useRef('');
+    useEffect(() => {
+        const latest = active[0]?.id;
+        if (latest && latest !== observed.current && window.matchMedia('(min-width:761px)').matches) {
+            observed.current = latest;
+            if (!run) {
+                setRun(latest);
+                setDetails(false);
+            }
+        }
+    }, [active[0]?.id, tid]);
     const single =
         t.participants.length === 2 &&
         t.participants.some((p: any) => p.id === me.id) &&
@@ -116,17 +127,39 @@ export function Mission({
     const addedAgent =
         addressed.some((x: any) => x.kind === 'agent' && !t.participants.some((p: any) => p.id === x.id)) &&
         t.participants.some((p: any) => p.id.startsWith('a_'));
+    const [linkedThreads, setLinkedThreads] = useState<any[]>([]);
+    const linkedMission = suggest?.[1] === '#' && suggest[2].includes(':') ? suggest[2].split(':')[0] : '';
+    useEffect(() => {
+        let current = true;
+        setLinkedThreads([]);
+        if (
+            linkedMission &&
+            linkedMission !== m.id &&
+            all.missions.some((x: any) => x.id === linkedMission)
+        ) {
+            api('thread.list', { mission: linkedMission })
+                .then((result) => {
+                    if (current) setLinkedThreads(result);
+                })
+                .catch(() => {});
+        }
+        return () => {
+            current = false;
+        };
+    }, [linkedMission, m.id]);
     const candidates =
         suggest?.[1] === '@'
             ? mentionable.filter((x) => x.name.toLowerCase().includes(suggest[2].toLowerCase())).slice(0, 6)
             : suggest?.[1] === '#'
               ? [
                     ...all.missions.map((x: any) => ({ ...x, display: '#' + x.id, name: x.title })),
-                    ...m.threads.map((x: any) => ({
-                        ...x,
-                        display: '#' + m.id + ':' + x.title,
-                        name: x.title,
-                    })),
+                    ...[...m.threads, ...linkedThreads]
+                        .filter((x: any) => x.kind !== 'working')
+                        .map((x: any) => ({
+                            ...x,
+                            display: '#' + x.mission + ':' + x.title,
+                            name: x.title,
+                        })),
                 ]
                     .filter((x) =>
                         (x.display + ' ' + x.name).toLowerCase().includes(suggest[2].toLowerCase()),
@@ -150,7 +183,7 @@ export function Mission({
             setPicked([]);
             setRefs([]);
             setConfirm(false);
-            if (r.runs?.length) {
+            if (r.runs?.length && window.matchMedia('(min-width:761px)').matches) {
                 setRun(r.runs[0]);
                 setDetails(false);
             }
@@ -279,7 +312,7 @@ export function Mission({
                         {threads && (
                             <div className="popover">
                                 {m.threads
-                                    .filter((x: any) => x.kind !== 'external')
+                                    .filter((x: any) => ['main', 'hosted'].includes(x.kind))
                                     .map((x: any) => (
                                         <button key={x.id} onClick={() => openThread(x.id)}>
                                             <MessageSquare />
@@ -404,7 +437,7 @@ export function Mission({
                                                     })}
                                                 </time>
                                             </div>
-                                            <Body text={msg.body} />
+                                            <Body text={msg.body} links={msg.links} />
                                             {t.runs
                                                 .filter((r: any) => r.trigger === msg.id)
                                                 .map((r: any) => (

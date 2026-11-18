@@ -77,6 +77,17 @@ pub async fn endpoint(
 ) -> ApiResult {
     let cli = data["cli"] == true;
     match op.as_str() {
+        "exchange" => {
+            let challenge =
+                URL_SAFE_NO_PAD.encode(Sha256::digest(field(&data, "verifier")?.as_bytes()));
+            let uid:Option<String>=sqlx::query_scalar("DELETE FROM cli_codes WHERE digest=$1 AND challenge=$2 AND expires>now() RETURNING person").bind(digest(field(&data,"code")?)).bind(challenge).fetch_optional(&app.db).await?;
+            login(
+                &app,
+                &uid.ok_or_else(|| anyhow::anyhow!("Invalid or expired login code"))?,
+                true,
+            )
+            .await
+        }
         "status" => {
             let ready: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM people)")
                 .fetch_one(&app.db)
@@ -196,12 +207,31 @@ async fn discovery(app: &App) -> Result<Value> {
     }
     Ok(doc)
 }
-pub async fn oidc_start(State(app): State<App>) -> ApiResult {
+pub async fn oidc_start(
+    State(app): State<App>,
+    Query(q): Query<std::collections::HashMap<String, String>>,
+) -> ApiResult {
     let doc = discovery(&app).await?;
     let state = secret();
     let nonce = secret();
     let verifier = secret();
     execute(&app.db,"INSERT INTO oidc_flows(state,nonce,verifier,expires) VALUES($1,$2,$3,now()+interval '10 minutes')",&[&state,&nonce,&verifier]).await?;
+    if let Some(port) = q.get("port") {
+        let port: u16 = port.parse()?;
+        let challenge = q
+            .get("challenge")
+            .filter(|s| s.len() == 43)
+            .ok_or_else(|| anyhow::anyhow!("Invalid CLI challenge"))?;
+        let client_state = q
+            .get("client_state")
+            .filter(|s| s.len() == 64 && s.bytes().all(|c| c.is_ascii_hexdigit()))
+            .ok_or_else(|| anyhow::anyhow!("Invalid CLI state"))?;
+        sqlx::query("UPDATE oidc_flows SET cli_return=$2 WHERE state=$1")
+            .bind(&state)
+            .bind(json!({"port":port,"challenge":challenge,"state":client_state}))
+            .execute(&app.db)
+            .await?;
+    }
     let mut url = url::Url::parse(field(&doc, "authorization_endpoint")?)?;
     url.query_pairs_mut().extend_pairs([
         ("client_id", std::env::var("RALLY_OIDC_CLIENT_ID")?),
@@ -232,7 +262,7 @@ pub async fn oidc_callback(
         return Err(anyhow::anyhow!("Access denied").into());
     }
     let flow = sqlx::query(
-        "DELETE FROM oidc_flows WHERE state=$1 AND expires>now() RETURNING nonce,verifier",
+        "DELETE FROM oidc_flows WHERE state=$1 AND expires>now() RETURNING nonce,verifier,cli_return",
     )
     .bind(state)
     .fetch_one(&app.db)
@@ -246,7 +276,10 @@ pub async fn oidc_callback(
         ("redirect_uri", format!("{}/auth/oidc/callback", app.base)),
         ("grant_type", "authorization_code".into()),
     ];
-    if let Ok(secret) = std::env::var("RALLY_OIDC_CLIENT_SECRET") {
+    if let Some(secret) = std::env::var("RALLY_OIDC_CLIENT_SECRET")
+        .ok()
+        .filter(|s| !s.is_empty())
+    {
         request = request.basic_auth(&client, Some(secret));
     } else {
         form.push(("client_id", client.clone()));
@@ -271,11 +304,24 @@ pub async fn oidc_callback(
     let key = keys
         .find(header.kid.as_deref().unwrap_or(""))
         .ok_or_else(|| anyhow::anyhow!("Unknown signing key"))?;
-    let mut check = Validation::new(Algorithm::RS256);
+    if !matches!(
+        header.alg,
+        Algorithm::RS256
+            | Algorithm::RS384
+            | Algorithm::RS512
+            | Algorithm::ES256
+            | Algorithm::ES384
+            | Algorithm::PS256
+            | Algorithm::EdDSA
+    ) {
+        return Err(anyhow::anyhow!("Unsupported OIDC signing algorithm").into());
+    }
+    let mut check = Validation::new(header.alg);
     check.set_audience(&[&client]);
     check.set_issuer(&[field(&doc, "issuer")?]);
     let claims = decode::<Value>(jwt, &DecodingKey::from_jwk(key)?, &check)?.claims;
     if claims["nonce"] != flow.get::<String, _>("nonce")
+        || (claims["aud"].as_array().is_some_and(|a| a.len() > 1) && claims["azp"] != client)
         || claims.get("azp").is_some_and(|v| v != &client)
     {
         return Err(anyhow::anyhow!("Access denied").into());
@@ -292,6 +338,23 @@ pub async fn oidc_callback(
         return Err(anyhow::anyhow!("Bootstrap the organisation owner first").into());
     }
     let uid:String=sqlx::query_scalar("INSERT INTO people(id,name,subject) VALUES($1,$2,$3) ON CONFLICT(subject) DO UPDATE SET name=excluded.name RETURNING id").bind(id("u")).bind(name).bind(subject).fetch_one(&app.db).await?;
+    if let Some(cli) = flow.get::<Option<Value>, _>("cli_return") {
+        let code = secret();
+        execute(
+            &app.db,
+            "INSERT INTO cli_codes VALUES($1,$2,$3,now()+interval '90 seconds')",
+            &[&digest(&code), &uid, field(&cli, "challenge")?],
+        )
+        .await?;
+        let mut callback = url::Url::parse(&format!("http://127.0.0.1:{}/rally", cli["port"]))?;
+        callback
+            .query_pairs_mut()
+            .append_pair("code", &code)
+            .append_pair("state", field(&cli, "state")?);
+        let mut r = Redirect::to(callback.as_str()).into_response();
+        set_cookie(&app, &mut r, "rally_oidc", "", 0);
+        return Ok(r);
+    }
     let session = login(&app, &uid, false).await?;
     let mut r = Redirect::to("/").into_response();
     if let Some(c) = session.headers().get(SET_COOKIE) {

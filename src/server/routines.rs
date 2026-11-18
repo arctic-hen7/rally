@@ -22,6 +22,13 @@ fn next(expr: &str) -> Result<Option<DateTime<Utc>>> {
             .ok_or_else(|| anyhow::anyhow!("Schedule has no future occurrence"))?,
     ))
 }
+fn directory(value: Option<&str>) -> Result<&str> {
+    let p = value.filter(|s| !s.is_empty()).unwrap_or(".");
+    if p != "." {
+        skills::relative(p)?;
+    }
+    Ok(p)
+}
 fn validate_repos(repos: &Value) -> Result<()> {
     for r in repos
         .as_array()
@@ -81,7 +88,7 @@ pub async fn call(app: &App, a: &Actor, op: &str, d: &Value) -> Result<Value> {
         let cron = opt(d, "cron");
         let repos = d.get("repos").cloned().unwrap_or(json!([]));
         validate_repos(&repos)?;
-        sqlx::query("INSERT INTO routines(id,name,owner_id,command,cron,hook_hash,repos,next_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8)").bind(&rid).bind(field(d,"name")?).bind(&a.uid).bind(field(d,"command")?).bind(cron).bind(digest(&key)).bind(repos).bind(next(cron)?).execute(&app.db).await?;
+        sqlx::query("INSERT INTO routines(id,name,owner_id,command,cron,hook_hash,repos,next_at,directory) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)").bind(&rid).bind(field(d,"name")?).bind(&a.uid).bind(field(d,"command")?).bind(cron).bind(digest(&key)).bind(repos).bind(next(cron)?).bind(directory(d["directory"].as_str())?).execute(&app.db).await?;
         return Ok(json!({"id":rid,"webhook":format!("{}/hooks/{rid}/{key}",app.base)}));
     }
     let rid = field(d, "routine")?;
@@ -111,7 +118,7 @@ pub async fn call(app: &App, a: &Actor, op: &str, d: &Value) -> Result<Value> {
             let repos = d.get("repos").unwrap_or(&r["repos"]);
             validate_repos(repos)?;
             let expr = d["cron"].as_str().unwrap_or(opt(&r, "cron"));
-            sqlx::query("UPDATE routines SET name=coalesce($2,name),command=coalesce($3,command),cron=$4,next_at=$5,repos=$6 WHERE id=$1").bind(rid).bind(d["name"].as_str()).bind(d["command"].as_str()).bind(expr).bind(next(expr)?).bind(repos).execute(&app.db).await?;
+            sqlx::query("UPDATE routines SET name=coalesce($2,name),command=coalesce($3,command),cron=$4,next_at=$5,repos=$6,directory=$7 WHERE id=$1").bind(rid).bind(d["name"].as_str()).bind(d["command"].as_str()).bind(expr).bind(next(expr)?).bind(repos).bind(directory(d["directory"].as_str().or(r["directory"].as_str()))?).execute(&app.db).await?;
             Ok(json!({"id":rid}))
         }
         "routine.enable" | "routine.disable" => {
@@ -219,7 +226,14 @@ async fn run(app: &App, jid: &str, token: &str) -> Result<(&'static str, String)
     env.extend([
         ("RALLY_URL".into(), var("RALLY_WORKER_URL", &app.base)),
         ("RALLY_TOKEN".into(), token.into()),
-        ("RALLY_EVENT".into(), "event.json".into()),
+        (
+            "RALLY_EVENT".into(),
+            if engine::local() {
+                root.join("event.json").display().to_string()
+            } else {
+                "/workspace/event.json".into()
+            },
+        ),
     ]);
     for repo in r["repos"].as_array().into_iter().flatten() {
         let args = [
@@ -240,7 +254,13 @@ async fn run(app: &App, jid: &str, token: &str) -> Result<(&'static str, String)
         &env,
         Some(&name),
         "sh",
-        &["-c", field(&r, "command")?],
+        &[
+            "-c",
+            r#"cd -- "$1" && exec sh -c "$2""#,
+            "rally",
+            directory(r["directory"].as_str())?,
+            field(&r, "command")?,
+        ],
     )?;
     cmd.stdin(Stdio::null())
         .stdout(Stdio::piped())

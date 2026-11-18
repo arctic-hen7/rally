@@ -80,6 +80,18 @@ async fn reconcile(app: &App, r: &Value, idle: bool) -> Result<Value> {
             command(app, &root, Some(name), &["push", "-u", "origin", branch]).await?;
         }
     }
+    let configured = command(
+        app,
+        &root,
+        Some(name),
+        &["config", "--get", "remote.origin.url"],
+    )
+    .await?;
+    if configured != remote_name {
+        bail!(
+            "Existing checkout has a different origin. Choose a new checkout name or move the old checkout before refreshing"
+        );
+    }
     command(app, &root, Some(name), &["fetch", "--prune", "origin"]).await?;
     let mut active = command(app, &root, Some(name), &["branch", "--show-current"]).await?;
     let dirty = !command(app, &root, Some(name), &["status", "--porcelain"])
@@ -96,7 +108,7 @@ async fn reconcile(app: &App, r: &Value, idle: bool) -> Result<Value> {
         let published = exists(app, &root, name, &remote_wip).await;
         if idle
             && !dirty
-            && active == wip
+            && (active == wip || active == branch)
             && contained(app, &root, name, &local_wip, &original).await
             && (!published || contained(app, &root, name, &remote_wip, &original).await)
             && contained(app, &root, name, branch, &original).await
@@ -235,6 +247,21 @@ pub async fn call(app: &App, a: &Actor, op: &str, d: &Value) -> Result<Value> {
             {
                 bail!("Invalid branch");
             }
+            {
+                let _guard = app.git_lock.lock().await;
+                if root.join(name).exists()
+                    && command(
+                        app,
+                        &root,
+                        Some(name),
+                        &["config", "--get", "remote.origin.url"],
+                    )
+                    .await?
+                        != field(d, "remote")?
+                {
+                    bail!("Existing checkout has a different origin. Choose a new checkout name");
+                }
+            }
             execute(
                 &app.db,
                 "INSERT INTO repos(mission,name,remote,branch) VALUES($1,$2,$3,$4)",
@@ -243,6 +270,7 @@ pub async fn call(app: &App, a: &Actor, op: &str, d: &Value) -> Result<Value> {
             .await?;
         }
         "repo.remove" => {
+            let _guard = app.git_lock.lock().await;
             execute(
                 &app.db,
                 "DELETE FROM repos WHERE mission=$1 AND name=$2",
@@ -285,9 +313,23 @@ pub async fn call(app: &App, a: &Actor, op: &str, d: &Value) -> Result<Value> {
                 }
                 let mut summary = opt(d, "summary").to_string();
                 if summary.is_empty() {
-                    let diff = command(app, &root, Some(name), &["diff", "HEAD", "--stat"]).await?;
+                    let diff = command(
+                        app,
+                        &root,
+                        Some(name),
+                        &[
+                            "diff",
+                            "--no-ext-diff",
+                            "--no-textconv",
+                            "--unified=2",
+                            "HEAD",
+                            "--",
+                        ],
+                    )
+                    .await?;
+                    let diff = diff.chars().take(16000).collect::<String>();
                     let paths = command(app, &root, Some(name), &["status", "--short"]).await?;
-                    let history=rows(&app.db,"SELECT to_jsonb(body) FROM messages WHERE thread=COALESCE(NULLIF($2,''),(SELECT id FROM threads WHERE mission=$1 AND kind='main')) AND thread IN(SELECT id FROM threads WHERE mission=$1) ORDER BY id DESC LIMIT 8",&[&mid,opt(d,"thread")]).await?;
+                    let history=rows(&app.db,"SELECT to_jsonb(left(body,2048)) FROM messages WHERE thread=COALESCE(NULLIF($2,''),(SELECT id FROM threads WHERE mission=$1 AND kind='main')) AND thread IN(SELECT id FROM threads WHERE mission=$1) ORDER BY id DESC LIMIT 8",&[&mid,opt(d,"thread")]).await?;
                     let prompt = format!(
                         "Write only one concise Git WIP commit subject. Files: {paths}\nDiff: {diff}\nRecent conversation: {history}"
                     );

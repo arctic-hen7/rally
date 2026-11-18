@@ -37,6 +37,13 @@ async fn post(app: &App, a: &Actor, d: &Value) -> Result<Value> {
     if t["kind"] == "external" {
         bail!("External sessions are captured from their original client");
     }
+    if t["kind"] == "working" {
+        let rid: String = sqlx::query_scalar("SELECT id FROM runs WHERE working_thread=$1")
+            .bind(tid)
+            .fetch_one(&app.db)
+            .await?;
+        return steer_side(app, a, &rid, d).await;
+    }
     let body = field(d, "body")?;
     let mut tx = app.db.begin().await?;
     sqlx::query("SELECT pg_advisory_xact_lock(hashtext($1))")
@@ -138,6 +145,7 @@ async fn post(app: &App, a: &Actor, d: &Value) -> Result<Value> {
     } else {
         (vec![a.uid.clone()], json!({}))
     };
+    let mut links = Vec::new();
     for reference in strings(&d["refs"]) {
         let refdata = json!({"thread":reference});
         let linked = thread(app, a, &refdata, false).await?;
@@ -147,7 +155,13 @@ async fn post(app: &App, a: &Actor, d: &Value) -> Result<Value> {
             field(&linked, "mission")?
         };
         grants[key] = json!(a.uid);
+        links.push(json!({"label":reference,"target":key}));
     }
+    sqlx::query("UPDATE messages SET links=$2 WHERE id=$1")
+        .bind(msg)
+        .bind(json!(links))
+        .execute(&mut *tx)
+        .await?;
     let mut runs = vec![];
     for aid in agents {
         let session:String=sqlx::query_scalar("INSERT INTO sessions(id,thread,agent) VALUES($1,$2,$3) ON CONFLICT(thread,agent) DO UPDATE SET agent=excluded.agent RETURNING id").bind(id("ss")).bind(tid).bind(&aid).fetch_one(&mut *tx).await?;
@@ -165,7 +179,9 @@ async fn post(app: &App, a: &Actor, d: &Value) -> Result<Value> {
             r
         } else {
             let r = id("run");
-            sqlx::query("INSERT INTO runs(id,session,dispatcher,trigger,status,readers,grants,model,instructions) SELECT $1,$2,$3,$4,'queued',$7::text[],$5,model,instructions FROM agents WHERE id=$6").bind(&r).bind(&session).bind(&a.uid).bind(msg).bind(&grants).bind(&aid).bind(&readers).execute(&mut *tx).await?;
+            let work = id("th");
+            sqlx::query("INSERT INTO threads(id,mission,title,kind) SELECT $1,$2,name||' · '||$3,'working' FROM agents WHERE id=$4").bind(&work).bind(mid).bind(msg.to_string()).bind(&aid).execute(&mut *tx).await?;
+            sqlx::query("INSERT INTO runs(id,session,dispatcher,trigger,status,readers,grants,model,instructions,working_thread) SELECT $1,$2,$3,$4,'queued',$7::text[],$5,model,instructions,$8 FROM agents WHERE id=$6").bind(&r).bind(&session).bind(&a.uid).bind(msg).bind(&grants).bind(&aid).bind(&readers).bind(&work).execute(&mut *tx).await?;
             r
         };
         runs.push(rid);
@@ -174,6 +190,52 @@ async fn post(app: &App, a: &Actor, d: &Value) -> Result<Value> {
     tx.commit().await?;
     let _ = app.events.send(mid.into());
     Ok(json!({"id":msg,"runs":runs}))
+}
+
+pub async fn record_work(app: &App, rid: &str, body: &str, key: &str) -> Result<()> {
+    if body.is_empty() {
+        return Ok(());
+    }
+    sqlx::query("INSERT INTO messages(thread,author,actor,source,body,origin_key) SELECT r.working_thread,a.name,a.id,'agent',$2,$3 FROM runs r JOIN sessions s ON s.id=r.session JOIN agents a ON a.id=s.agent WHERE r.id=$1 AND r.working_thread IS NOT NULL ON CONFLICT(thread,origin_key) DO NOTHING").bind(rid).bind(body).bind(key).execute(&app.db).await?;
+    Ok(())
+}
+
+async fn steer_side(app: &App, a: &Actor, rid: &str, d: &Value) -> Result<Value> {
+    personal(a)?;
+    let mut tx = app.db.begin().await?;
+    let row=sqlx::query("SELECT r.working_thread,t.mission FROM runs r JOIN sessions s ON s.id=r.session JOIN threads t ON t.id=s.thread WHERE r.id=$1 AND r.status IN ('queued','working','interrupted') AND can_read($2,t.mission) FOR UPDATE OF r").bind(rid).bind(&a.uid).fetch_optional(&mut *tx).await?.ok_or_else(||anyhow::anyhow!("Run ended or inaccessible"))?;
+    let tid: Option<String> = row.get("working_thread");
+    let tid = tid.ok_or_else(|| anyhow::anyhow!("Run has no working conversation"))?;
+    let mut grants = json!({});
+    for reference in strings(&d["refs"]) {
+        let linked = thread(app, a, &json!({"thread":reference}), false).await?;
+        let key = if reference.contains(':') || reference.starts_with("th_") {
+            field(&linked, "id")?
+        } else {
+            field(&linked, "mission")?
+        };
+        grants[key] = json!(a.uid);
+    }
+    let msg = message(
+        &mut tx,
+        &tid,
+        &a.name,
+        &a.uid,
+        "rally",
+        field(d, "body")?,
+        None,
+    )
+    .await?
+    .unwrap();
+    sqlx::query("UPDATE runs SET readers=ARRAY(SELECT DISTINCT unnest(readers || ARRAY[$2::text])),grants=grants||$3 WHERE id=$1").bind(rid).bind(&a.uid).bind(grants).execute(&mut *tx).await?;
+    sqlx::query("INSERT INTO run_inputs(run,message,kind) VALUES($1,$2,'steer')")
+        .bind(rid)
+        .bind(msg)
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
+    let _ = app.events.send(row.get("mission"));
+    Ok(json!({"id":msg,"run":rid}))
 }
 
 pub async fn finish(app: &App, rid: &str, status: &str, body: &str) -> Result<()> {
@@ -206,6 +268,9 @@ pub async fn finish(app: &App, rid: &str, status: &str, body: &str) -> Result<()
         &format!("{name} · {status}"),
     )
     .await?;
+    if let Some(n) = msg {
+        sqlx::query("INSERT INTO notifications(person,thread,message,run,reason,summary) SELECT person,$1,$2,$3,'following',$4 FROM subscriptions WHERE thread=$1 AND mode='all' AND can_read(person,$5) AND person!=$6").bind(tid).bind(n).bind(rid).bind(format!("{name} replied")).bind(r.get::<String,_>("mission")).bind(r.get::<String,_>("dispatcher")).execute(&mut *tx).await?;
+    }
     tx.commit().await?;
     let _ = app.events.send(r.get::<String, _>("mission"));
     Ok(())
@@ -229,6 +294,24 @@ async fn capture(app: &App, a: &Actor, d: &Value) -> Result<Value> {
         Some(field(d, "key")?),
     )
     .await?;
+    if let Some(n) = n {
+        let shas = d["commits"]
+            .as_object()
+            .into_iter()
+            .flatten()
+            .filter(|(name, v)| {
+                rally_teams::slug(name).is_ok()
+                    && v.as_str().is_some_and(|s| {
+                        matches!(s.len(), 40 | 64) && s.bytes().all(|b| b.is_ascii_hexdigit())
+                    })
+            })
+            .collect::<std::collections::BTreeMap<_, _>>();
+        sqlx::query("UPDATE messages SET commits=$2 WHERE id=$1")
+            .bind(n)
+            .bind(json!(shas))
+            .execute(&mut *tx)
+            .await?;
+    }
     tx.commit().await?;
     let _ = app.events.send(mid);
     Ok(json!({"id":n,"thread":tid}))
@@ -325,13 +408,7 @@ pub async fn call(app: &App, a: &Actor, op: &str, d: &Value) -> Result<Value> {
                 execute(db,"UPDATE runs SET status=CASE WHEN status='queued' THEN 'stopped' ELSE 'stopping' END WHERE id=$1 AND status IN ('queued','working','interrupted')",&[rid]).await?;
             }
             if op == "run.steer" {
-                if !["working", "queued", "interrupted"].contains(&opt(&r, "status")) {
-                    bail!("Run has ended");
-                }
-                let mut input = d.clone();
-                input["thread"] = r["thread"].clone();
-                input["mentions"] = json!([r["agent"]]);
-                return post(app, a, &input).await;
+                return steer_side(app, a, rid, d).await;
             }
             if op == "run.answer" {
                 let mut tx = db.begin().await?;
@@ -342,6 +419,7 @@ pub async fn call(app: &App, a: &Actor, op: &str, d: &Value) -> Result<Value> {
                 sqlx::query("UPDATE runs SET readers=ARRAY(SELECT DISTINCT unnest(readers || ARRAY[$2::text])) WHERE id=$1").bind(rid).bind(&a.uid).execute(&mut *tx).await?;
                 tx.commit().await?;
             }
+            r["activity"]=rows(db,"SELECT jsonb_build_object('id',id,'author',author,'body',body,'source',source) FROM messages WHERE thread=$1 ORDER BY id",&[opt(&r,"working_thread")]).await?;
             r["questions"] = rows(
                 db,
                 "SELECT to_jsonb(q)-'request' FROM questions q WHERE run=$1 ORDER BY id",

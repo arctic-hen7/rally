@@ -1,5 +1,6 @@
 use super::*;
 use super::{chat, engine, git};
+use anyhow::Context;
 use rally_teams::{digest, secret};
 use std::{path::Path, process::Stdio, time::Duration};
 use tokio::{
@@ -147,7 +148,9 @@ async fn drive(app: &App, rid: &str, token: &str, resuming: bool) -> Result<()> 
     let context = app.root.join("contexts").join(rid);
     tokio::fs::create_dir_all(&context).await?;
     let bundle = super::skills::bundle(app, mid, field(&r, "agent")?).await?;
-    rally_teams::materialize_skills(&context.join("skills"), &bundle)?;
+    if !context.join("skills").is_dir() {
+        rally_teams::materialize_skills(&context.join("skills"), &bundle)?;
+    }
     let mut env = environment()?;
     env.extend([
         ("RALLY_URL".into(), var("RALLY_WORKER_URL", &app.base)),
@@ -206,7 +209,13 @@ async fn drive(app: &App, rid: &str, token: &str, resuming: bool) -> Result<()> 
         let _ = child.kill().await;
     }
     let tail = error_task.await.unwrap_or_default();
-    result.map_err(|e| if tail.is_empty() { e } else { e.context(tail) })
+    result.map_err(|e| {
+        if tail.is_empty() {
+            e
+        } else {
+            anyhow::anyhow!("{e:#} ({tail})")
+        }
+    })
 }
 
 async fn conversation(
@@ -241,23 +250,51 @@ async fn conversation(
     if acp {
         let init=w.call("initialize",json!({"protocolVersion":1,"clientCapabilities":{"elicitation":{"form":{}}},"clientInfo":{"name":"rally","version":env!("CARGO_PKG_VERSION")}})).await?;
         let params = json!({"cwd":cwd,"mcpServers":[],"systemPrompt":{"mode":"append","content":[{"type":"text","text":instructions}]}});
-        native_id = if let Some(native) = native {
+        let result = if let Some(native) = native {
             if init["agentCapabilities"]["loadSession"] != true {
                 bail!("ACP adapter cannot load a persisted session");
             }
             let mut p = params;
             p["sessionId"] = json!(native);
-            w.call("session/load", p).await?;
-            native.to_string()
+            w.call("session/load", p).await?
         } else {
-            let result = w.call("session/new", params).await?;
-            field(&result, "sessionId")?.to_string()
+            w.call("session/new", params).await?
         };
-        w.call(
-            "session/set_model",
-            json!({"sessionId":native_id,"modelId":model}),
-        )
-        .await?;
+        native_id = native
+            .or(result["sessionId"].as_str())
+            .context("ACP omitted the session ID")?
+            .to_string();
+        if let Some(config) = result["configOptions"]
+            .as_array()
+            .and_then(|opts| opts.iter().find(|o| o["category"] == "model"))
+        {
+            if config["currentValue"] != model {
+                w.call(
+                    "session/set_config_option",
+                    json!({"sessionId":native_id,"configId":config["id"],"value":model}),
+                )
+                .await?;
+            }
+        } else {
+            let models = &result["models"];
+            let current = opt(models, "currentModelId");
+            if current != model && current.split('[').next() != Some(model) {
+                let target = models["availableModels"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|m| m["modelId"].as_str())
+                    .find(|id| {
+                        *id == model || id.strip_prefix(model).is_some_and(|s| s.starts_with('['))
+                    })
+                    .unwrap_or(model);
+                w.call(
+                    "session/set_model",
+                    json!({"sessionId":native_id,"modelId":target}),
+                )
+                .await?;
+            }
+        }
     } else {
         w.call("initialize",json!({"clientInfo":{"name":"rally","version":env!("CARGO_PKG_VERSION")},"capabilities":{"experimentalApi":true}})).await?;
         w.send(json!({"method":"initialized"})).await?;
@@ -279,6 +316,19 @@ async fn conversation(
         };
         let start = w.call(method, params).await?;
         native_id = field(&start["thread"], "id")?.to_string();
+        if resuming
+            && let Some(old) = start["thread"]["turns"].as_array().and_then(|ts| {
+                ts.iter()
+                    .find(|t| t["id"] == r["native_turn"] && t["status"] == "completed")
+            })
+        {
+            let last = old["items"]
+                .as_array()
+                .and_then(|items| items.iter().rev().find(|i| i["type"] == "agentMessage"))
+                .map(|i| opt(i, "text"))
+                .unwrap_or_default();
+            return chat::finish(app, rid, "done", last).await;
+        }
     }
     execute(
         &app.db,
@@ -287,7 +337,7 @@ async fn conversation(
     )
     .await?;
     let trigger = r["trigger"].as_i64().unwrap();
-    let addressed = sqlx::query("SELECT author,body FROM messages WHERE id=$1")
+    let addressed = sqlx::query("SELECT author,body,links FROM messages WHERE id=$1")
         .bind(trigger)
         .fetch_one(&app.db)
         .await?;
@@ -316,9 +366,10 @@ async fn conversation(
         "We got interrupted, continue".to_string()
     } else {
         format!(
-            "{instructions}\n\n{history}\n\n### Addressed by {}\n{}",
+            "{instructions}\n\n{history}\n\n### Addressed by {}\n{}\nReferences: {}",
             addressed.get::<String, _>("author"),
-            addressed.get::<String, _>("body")
+            addressed.get::<String, _>("body"),
+            addressed.get::<Value, _>("links")
         )
     };
     let turn;
@@ -341,7 +392,17 @@ async fn conversation(
         turn = field(&result["turn"], "id")?.to_string();
     }
     sqlx::query("UPDATE sessions SET delivered=ARRAY(SELECT DISTINCT unnest(delivered || $2::bigint[])) WHERE id=$1").bind(session).bind(delivered).execute(&app.db).await?;
-    let mut partial = String::new();
+    execute(
+        &app.db,
+        "UPDATE runs SET native_turn=$2 WHERE id=$1",
+        &[rid, &turn],
+    )
+    .await?;
+    let mut partial = if resuming {
+        opt(r, "partial").to_string()
+    } else {
+        String::new()
+    };
     let mut final_text = String::new();
     let mut tick = tokio::time::interval(Duration::from_millis(180));
     let mut dirty = false;
@@ -363,7 +424,7 @@ async fn conversation(
                     "item/agentMessage/delta"=>{partial.push_str(opt(p,"delta"));dirty=true;}
                     "item/completed" if p["item"]["type"]=="agentMessage"=>{
                         let item=&p["item"];let text=opt(item,"text");
-                        if !text.is_empty(){final_text=text.into();partial.push('\n');dirty=true;}
+                        if !text.is_empty(){chat::record_work(app,rid,text,opt(item,"id")).await?;final_text=text.into();partial.push('\n');dirty=true;}
                         if item["questions"].is_array(){question(app,rid,Value::Null,item["questions"].clone(),false,opt(item,"id")).await?;}
                     }
                     "session/update" if p["update"]["sessionUpdate"]=="agent_message_chunk"=>{partial.push_str(opt(&p["update"]["content"],"text"));dirty=true;}

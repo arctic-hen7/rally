@@ -46,7 +46,10 @@ async fn load(app: &App, s: &Value) -> Result<()> {
     if !dir.join("HEAD").exists() {
         git(&dir, &["init", "--bare", "."]).await?;
     }
-    let branch = s["ref"].as_str().unwrap_or("HEAD");
+    let branch = s["ref"]
+        .as_str()
+        .filter(|v| !v.is_empty())
+        .unwrap_or("HEAD");
     if branch.starts_with('-') {
         bail!("Invalid skill ref");
     }

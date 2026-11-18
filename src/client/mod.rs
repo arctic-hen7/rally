@@ -1,4 +1,5 @@
 mod hooks;
+mod oidc;
 mod workspace;
 
 use anyhow::{Context, Result, bail};
@@ -169,18 +170,23 @@ const OPS: &[(&str, &str, &str)] = &[
     ),
     (
         "routine.create",
-        "name command cron repos",
+        "name command cron repos directory",
         "Create a cron or webhook routine",
     ),
     (
         "routine.update",
-        "routine name command cron repos",
+        "routine name command cron repos directory",
         "Edit a routine",
     ),
     ("routine.enable", "routine", "Enable a routine"),
     ("routine.disable", "routine", "Disable a routine"),
     ("routine.trigger", "routine payload", "Trigger a routine"),
     ("routine.transfer", "routine person", "Transfer ownership"),
+    (
+        "inbox.settings",
+        "settings",
+        "Read or update account-wide push preferences using JSON",
+    ),
     ("inbox.list", "", "Show notifications"),
     ("inbox.read", "id", "Mark one or all notifications as read"),
     ("whoami", "", "Show the current principal"),
@@ -208,7 +214,11 @@ const OPS: &[(&str, &str, &str)] = &[
         "mission name thread summary fork",
         "Commit hosted edits, optionally on a recovery branch",
     ),
-    ("login", "email password token url", "Sign in to a server"),
+    (
+        "login",
+        "email password token url oidc no-browser",
+        "Sign in to a server",
+    ),
     ("logout", "", "End your session"),
     (
         "bootstrap",
@@ -270,7 +280,17 @@ fn cli() -> Command {
                 "refs" => "link",
                 k => k,
             });
-            if ["confirm", "fork", "local", "archived", "print-path"].contains(&key) {
+            if [
+                "confirm",
+                "fork",
+                "local",
+                "archived",
+                "print-path",
+                "oidc",
+                "no-browser",
+            ]
+            .contains(&key)
+            {
                 arg = arg.action(ArgAction::SetTrue);
             }
             if ["mentions", "refs"].contains(&key) {
@@ -318,7 +338,17 @@ pub fn main() -> Result<()> {
     let keys = OPS.iter().find(|(k, _, _)| k == &op).unwrap().1;
     let mut d = json!({});
     for key in keys.split_whitespace() {
-        if ["confirm", "fork", "local", "archived", "print-path"].contains(&key) {
+        if [
+            "confirm",
+            "fork",
+            "local",
+            "archived",
+            "print-path",
+            "oidc",
+            "no-browser",
+        ]
+        .contains(&key)
+        {
             if m.get_flag(key) {
                 d[key] = json!(true);
             }
@@ -327,7 +357,8 @@ pub fn main() -> Result<()> {
                 d[key] = json!(v.collect::<Vec<_>>());
             }
         } else if let Some(value) = m.get_one::<String>(key) {
-            d[key] = if ["repos", "answer", "payload", "offset", "limit"].contains(&key) {
+            d[key] = if ["repos", "answer", "settings", "payload", "offset", "limit"].contains(&key)
+            {
                 serde_json::from_str(value)?
             } else {
                 json!(value)
@@ -418,7 +449,9 @@ pub fn main() -> Result<()> {
             if let Some(url) = d["url"].as_str() {
                 client.url = url.trim_end_matches('/').to_string();
             }
-            if let Some(token) = d["token"].as_str() {
+            if d["oidc"] == true {
+                client.token = oidc::login(&client, d["no-browser"] == true)?;
+            } else if let Some(token) = d["token"].as_str() {
                 client.token = token.to_string();
                 client.api("whoami", &json!({}))?;
             } else {

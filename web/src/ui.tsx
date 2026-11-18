@@ -42,13 +42,57 @@ export function Avatar({
         </span>
     );
 }
-export function Body({ text }: { text: string }) {
+export function Body({ text, links = [] }: { text: string; links?: any[] }) {
+    function linkedReferences() {
+        return (tree: any) => {
+            const visit = (node: any) => {
+                if (!Array.isArray(node.children) || ['link', 'code', 'inlineCode'].includes(node.type))
+                    return;
+                node.children = node.children.flatMap((c: any) => {
+                    if (c.type !== 'text') {
+                        visit(c);
+                        return [c];
+                    }
+                    let parts = [c];
+                    for (const link of links.filter((l) => l?.label && l?.target)) {
+                        parts = parts.flatMap((part) => {
+                            if (part.type !== 'text') return [part];
+                            const pieces = part.value.split(link.label);
+                            return pieces.flatMap((value: string, i: number) => [
+                                ...(i
+                                    ? [
+                                          {
+                                              type: 'link',
+                                              url:
+                                                  '#' +
+                                                  (link.target.startsWith('th_') ? 'thread/' : 'mission/') +
+                                                  encodeURIComponent(link.target),
+                                              children: [{ type: 'text', value: link.label }],
+                                          },
+                                      ]
+                                    : []),
+                                { type: 'text', value },
+                            ]);
+                        });
+                    }
+                    return parts;
+                });
+            };
+            visit(tree);
+        };
+    }
     return (
         <div className="markdown">
             <Markdown
-                remarkPlugins={[remarkGfm]}
+                remarkPlugins={[remarkGfm, linkedReferences]}
                 components={{
-                    a: (props) => <a {...props} rel="noreferrer" target="_blank" />,
+                    a: (props) => (
+                        <a
+                            {...props}
+                            rel="noreferrer"
+                            target={props.href?.startsWith('#') ? undefined : '_blank'}
+                        />
+                    ),
                 }}
             >
                 {text}

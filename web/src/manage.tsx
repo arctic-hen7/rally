@@ -27,6 +27,7 @@ export const roleFields = [
 export const routineFields = [
     required('name', 'Routine name'),
     required('command', 'Shell command', 'area'),
+    { key: 'directory', label: 'Working directory', placeholder: '.' },
     { key: 'cron', label: 'Cron schedule (UTC)', placeholder: 'Leave empty for webhook only' },
     {
         key: 'repos',
@@ -93,6 +94,13 @@ export function Manage({ page, data, edit, act, user, revision, selectMission, e
                 submit: 'Create routine',
             });
     };
+    const [preferences, setPreferences] = useState<Record<string, boolean>>({});
+    useEffect(() => {
+        if (page === 'Settings')
+            api('inbox.settings')
+                .then(setPreferences)
+                .catch((e) => setError(e.message));
+    }, [page]);
     async function push() {
         try {
             const reg = await navigator.serviceWorker.ready;
@@ -150,6 +158,34 @@ export function Manage({ page, data, edit, act, user, revision, selectMission, e
                     </button>
                     <button onClick={exit}>Sign out</button>
                     {error && <p role="status">{error}</p>}
+                </Section>
+                <Section title="Push notifications">
+                    {Object.entries({
+                        mentions: 'Direct mentions',
+                        questions: 'Agent questions',
+                        outcomes: 'Agent outcomes',
+                        following: 'Followed threads',
+                    }).map(([key, label]) => (
+                        <label key={key} className="push-preference">
+                            <input
+                                type="checkbox"
+                                checked={preferences[key] ?? true}
+                                onChange={async (event) => {
+                                    try {
+                                        setPreferences(
+                                            await api('inbox.settings', {
+                                                settings: { [key]: event.target.checked },
+                                            }),
+                                        );
+                                    } catch (e: any) {
+                                        setError(e.message);
+                                    }
+                                }}
+                            />
+                            {label}
+                        </label>
+                    ))}
+                    <small>Applies to all your subscribed devices.</small>
                 </Section>
                 {user.owner && (
                     <Section title="Organisation">

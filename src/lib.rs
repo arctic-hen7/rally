@@ -113,7 +113,14 @@ pub fn materialize_skills(root: &Path, bundle: &Value) -> Result<()> {
             }
             let dest = dir.join(path);
             std::fs::create_dir_all(dest.parent().unwrap())?;
-            std::fs::write(&dest, STANDARD.decode(field(file, "data")?)?)?;
+            std::fs::write(
+                &dest,
+                STANDARD.decode(
+                    file["data"]
+                        .as_str()
+                        .ok_or_else(|| anyhow::anyhow!("Missing skill data"))?,
+                )?,
+            )?;
             std::fs::set_permissions(
                 dest,
                 std::fs::Permissions::from_mode(if file["executable"] == true {

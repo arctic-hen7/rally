@@ -109,6 +109,19 @@ pub fn command(
             ),
         ]);
     }
+    if let Some((_, rid)) = env.iter().find(|(k, _)| k == "RALLY_RUN") {
+        c.args([
+            "--volume",
+            &format!(
+                "{}:/root/.agents/skills:ro",
+                host_root
+                    .join("contexts")
+                    .join(rid)
+                    .join("skills")
+                    .display()
+            ),
+        ]);
+    }
     let mounts: Vec<String> = serde_json::from_str(&var("RALLY_RUNTIME_MOUNTS", "[]"))?;
     for mount in mounts {
         c.args(["--volume", &mount]);

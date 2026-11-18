@@ -83,3 +83,28 @@ test('mobile navigation, mission shell and PWA manifest', async ({ page }, info)
     await expect(page.getByRole('heading', { name: 'Agents', exact: true })).toBeVisible();
     expect((await (await page.request.get('/manifest.webmanifest')).json()).display).toBe('standalone');
 });
+
+test('agent pane streams the run, accepts a queued answer and steers the same invocation', async ({
+    page,
+}, info) => {
+    test.skip(process.env.RALLY_TEST_HARNESS !== '1', 'Requires the deterministic hosted test adapter');
+    await page.goto('/#mission/' + mission);
+    const message = page.getByRole('textbox', { name: 'Message', exact: true });
+    await message.fill('@engineer HOLD QUESTION');
+    await page.getByRole('button', { name: 'Approve', exact: true }).click();
+    await page.getByRole('button', { name: 'Send message', exact: true }).click();
+    const pane = page.locator('.side-pane.working');
+    await expect(pane).toBeVisible();
+    await expect(pane.getByText('Which scope?', { exact: false }).first()).toBeVisible();
+    await pane.getByRole('button', { name: 'Small', exact: true }).click();
+    await pane.getByRole('button', { name: 'Send answer', exact: true }).click();
+    await expect(pane.getByText('Answered', { exact: true })).toBeVisible();
+    await message.fill('An ordinary message in an active 1:1');
+    await expect(page.getByRole('button', { name: 'Send message', exact: true })).toBeDisabled();
+    await pane.getByPlaceholder('Steer @engineer…').fill('FINISH this task');
+    await pane.getByRole('button', { name: 'Steer', exact: true }).click();
+    await expect(
+        page.locator('.timeline').getByText('Completed after steering.', { exact: true }),
+    ).toBeVisible();
+    await page.screenshot({ path: info.outputPath('agent-pane.png') });
+});

@@ -107,7 +107,7 @@ pub fn capture(adapter: &str) -> Result<()> {
     } else {
         format!("{adapter} session")
     };
-    let payload = json!({"mission":mid,"source":adapter,"session":session,"title":title,"role":role,"body":text,"key":key,"server":c.url});
+    let payload = json!({"mission":mid,"source":adapter,"session":session,"title":title,"role":role,"body":text,"key":key,"server":c.url,"commits":workspace::commits(cwd,&c.url,&mid)?});
     write_json(
         &dir.join(format!("{timestamp:032}-{}.json", id("e"))),
         &payload,

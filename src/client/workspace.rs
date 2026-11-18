@@ -158,7 +158,7 @@ pub fn open(c: &Client, mid: &str) -> Result<PathBuf> {
                 &["clone", "--branch", branch, "--", field(r, "remote")?, name],
             )?;
         } else {
-            if git(&repo, &["remote", "get-url", "origin"])? != field(r, "remote")? {
+            if git(&repo, &["config", "--get", "remote.origin.url"])? != field(r, "remote")? {
                 bail!("{name} has a different remote");
             }
             git(&repo, &["fetch", "--prune", "origin"])?;
@@ -208,6 +208,17 @@ pub fn open(c: &Client, mid: &str) -> Result<PathBuf> {
         }
         fs::write(p, text)?;
     }
+    write_json(
+        &root.join(".rally/repos.json"),
+        &json!(
+            m["repos"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|r| &r["name"])
+                .collect::<Vec<_>>()
+        ),
+    )?;
     Ok(root)
 }
 pub fn quote(s: &str) -> String {
@@ -234,4 +245,30 @@ pub fn shell(shell: &str) -> Result<&'static str> {
 end"#),
         _ => bail!("Supported shells: bash, zsh, fish"),
     }
+}
+
+pub fn commits(cwd: &Path, url: &str, mid: &str) -> Result<Value> {
+    let regs = read_json(&config_dir().join("missions.json"))?;
+    let mut result = json!({});
+    for root in cwd.canonicalize()?.ancestors() {
+        let Some(r) = regs.get(root.to_string_lossy().as_ref()) else {
+            continue;
+        };
+        if r["mission"] != mid || r["url"] != url {
+            continue;
+        }
+        let names = read_json(&root.join(".rally/repos.json"))?;
+        for name in names
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+        {
+            if let Ok(sha) = git(&root.join(slug(name)?), &["rev-parse", "HEAD"]) {
+                result[name] = json!(sha);
+            }
+        }
+        break;
+    }
+    Ok(result)
 }

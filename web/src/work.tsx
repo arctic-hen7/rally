@@ -54,8 +54,8 @@ function Questions({ q, run, changed }: any) {
             {fields.map((f: any, i: number) => {
                 const key = f.id || String(i);
                 return (
-                    <label key={key}>
-                        {f.question || f.title}
+                    <div className="question-field" key={key}>
+                        <label htmlFor={q.id + key}>{f.question || f.title}</label>
                         {q.answer ? (
                             <small>{JSON.stringify(q.answer[key]?.answers || q.answer[key])}</small>
                         ) : (
@@ -74,6 +74,7 @@ function Questions({ q, run, changed }: any) {
                                     ))}
                                 </div>
                                 <input
+                                    id={q.id + key}
                                     required
                                     value={answers[key] || ''}
                                     placeholder="Your answer"
@@ -81,7 +82,7 @@ function Questions({ q, run, changed }: any) {
                                 />
                             </>
                         )}
-                    </label>
+                    </div>
                 );
             })}
             {!q.answer && (
@@ -150,7 +151,15 @@ export function Working({ id, close, tick, refresh }: any) {
                     <i className={active ? 'pulse' : ''} />
                     {run.status} <span>· {run.model}</span>
                 </div>
-                {run.partial && <Body text={run.partial} />}{' '}
+                {run.partial && <Body text={run.partial} />}
+                {run.activity
+                    ?.filter((m: any) => m.source !== 'agent')
+                    .map((m: any) => (
+                        <div key={m.id} className="steer-message">
+                            <strong>{m.author}</strong>
+                            <Body text={m.body} />
+                        </div>
+                    ))}{' '}
                 {run.error && <p className="error">{run.error}</p>}
                 {run.questions.map((q: any) => (
                     <Questions key={q.id} q={q} run={id} changed={load} />

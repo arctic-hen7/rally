@@ -1,4 +1,5 @@
 use super::*;
+use anyhow::Context;
 use web_push::{
     ContentEncoding, IsahcWebPushClient, SubscriptionInfo, VapidSignatureBuilder, WebPushClient,
     WebPushMessageBuilder,
@@ -10,6 +11,17 @@ pub async fn call(app: &App, a: &Actor, op: &str, d: &Value) -> Result<Value> {
         "inbox.list"=> rows(&app.db,"SELECT to_jsonb(n)||jsonb_build_object('mission',t.mission,'title',t.title) FROM notifications n JOIN threads t ON t.id=n.thread WHERE n.person=$1 AND can_read($1,t.mission) ORDER BY n.id DESC LIMIT 200",&[&a.uid]).await,
         "inbox.read"=>{
             execute(&app.db,"UPDATE notifications SET seen=true WHERE person=$1 AND ($2='' OR id::text=$2)",&[&a.uid,opt(d,"id")]).await?;Ok(json!({"ok":true}))
+        }
+        "inbox.settings" => {
+            if let Some(settings) = d.get("settings") {
+                let fields = settings.as_object().context("Expected push settings")?;
+                if fields.iter().any(|(key, value)| !matches!(key.as_str(), "mentions" | "questions" | "outcomes" | "following") || !value.is_boolean()) {
+                    bail!("Unknown push setting or invalid value");
+                }
+                sqlx::query("UPDATE people SET push_settings=push_settings || $2 WHERE id=$1")
+                    .bind(&a.uid).bind(settings).execute(&app.db).await?;
+            }
+            one(&app.db, "SELECT push_settings FROM people WHERE id=$1", &[&a.uid]).await
         }
         "device.key"=>Ok(json!({"key":std::env::var("RALLY_VAPID_PUBLIC").ok()})),
         "device.subscribe"=>{
@@ -35,7 +47,7 @@ pub async fn deliver(app: &App) -> Result<()> {
     else {
         return Ok(());
     };
-    let jobs=sqlx::query("SELECT n.id,n.summary,n.thread,n.run,d.endpoint,d.subscription FROM notifications n JOIN threads t ON t.id=n.thread JOIN devices d ON d.person=n.person WHERE NOT n.seen AND can_read(n.person,t.mission) AND n.created>now()-interval '1 day' AND NOT EXISTS(SELECT 1 FROM push_deliveries p WHERE p.notification=n.id AND p.endpoint=d.endpoint) ORDER BY n.id LIMIT 32").fetch_all(&app.db).await?;
+    let jobs=sqlx::query("SELECT n.id,n.summary,n.thread,n.run,d.endpoint,d.subscription FROM notifications n JOIN threads t ON t.id=n.thread JOIN devices d ON d.person=n.person JOIN people p ON p.id=n.person WHERE (p.push_settings->>(CASE n.reason WHEN 'mention' THEN 'mentions' WHEN 'question' THEN 'questions' WHEN 'following' THEN 'following' ELSE 'outcomes' END))::boolean AND NOT n.seen AND can_read(n.person,t.mission) AND n.created>now()-interval '1 day' AND NOT EXISTS(SELECT 1 FROM push_deliveries p WHERE p.notification=n.id AND p.endpoint=d.endpoint) ORDER BY n.id LIMIT 32").fetch_all(&app.db).await?;
     let client = IsahcWebPushClient::new()?;
     for job in jobs {
         let item: SubscriptionInfo = serde_json::from_value(job.get("subscription"))?;
