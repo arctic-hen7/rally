@@ -1,0 +1,13 @@
+{
+  "name": "rally-web",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "bun build src/main.tsx --outdir dist --minify --entry-naming app.js && cp public/* dist/"
+  },
+  "dependencies": {
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "lucide-react": "^0.577.0"
+  }
+}
