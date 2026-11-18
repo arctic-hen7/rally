@@ -27,7 +27,7 @@ The first start builds the shared runtime image. Public package registries and t
 
 ## OIDC and push
 
-Register `https://YOUR-RALLY/auth/oidc/callback` as an exact redirect URI at your identity provider. Configure `RALLY_OIDC_ISSUER`, `RALLY_OIDC_CLIENT_ID`, and, for a confidential client, `RALLY_OIDC_CLIENT_SECRET`. A successful trusted-issuer login provisions a member keyed by issuer and subject. Bootstrap the first owner using the setup screen. Add the new OIDC member to missions or groups. The browser and CLI use the same provider registration.
+Register `https://YOUR-RALLY/auth/oidc/callback` as an exact redirect URI at your identity provider. Configure `RALLY_OIDC_ISSUER`, `RALLY_OIDC_CLIENT_ID`, and, for a confidential client, `RALLY_OIDC_CLIENT_SECRET`. A successful trusted-issuer login provisions a member keyed by issuer and subject. Bootstrap the first owner using the setup screen. Add the new OIDC member to missions or groups, or grant access to all missions by choosing Admin for that account in Settings. The browser and CLI use the same provider registration.
 
 Generate a P-256 VAPID pair with `bunx web-push generate-vapid-keys`. Store the two URL-safe base64 values in `RALLY_VAPID_PUBLIC` and `RALLY_VAPID_PRIVATE`. Keep the private value and database credentials in the operator's configuration. Set `RALLY_VAPID_CONTACT` to a reachable mailto address. Each device registers from Settings. Browsers use their own push service, so the server needs outbound HTTPS to that service.
 

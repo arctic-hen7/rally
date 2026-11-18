@@ -57,7 +57,7 @@ const OPS: &[(&str, &str, &str)] = &[
     ("topic.create", "slug name", "Create a topic"),
     (
         "mission.list",
-        "topic archived local",
+        "topic status local",
         "List accessible or locally opened missions",
     ),
     ("mission.show", "mission", "Show a mission and its branches"),
@@ -68,10 +68,22 @@ const OPS: &[(&str, &str, &str)] = &[
     ),
     (
         "mission.update",
-        "mission title description",
+        "mission title description status",
         "Edit mission details",
     ),
-    ("mission.archive", "mission", "Archive a mission"),
+    ("status.list", "", "List workspace mission statuses"),
+    ("status.create", "name color", "Create a workspace status"),
+    (
+        "status.update",
+        "status name color",
+        "Change a workspace status",
+    ),
+    ("status.remove", "status", "Remove an unused status"),
+    (
+        "account.role",
+        "person role",
+        "Assign member or admin access",
+    ),
     (
         "mission.fork",
         "mission title",
@@ -92,7 +104,7 @@ const OPS: &[(&str, &str, &str)] = &[
         "mission principal",
         "Remove a direct mission grant",
     ),
-    ("account.invite", "email", "Invite a local user"),
+    ("account.invite", "email role", "Invite a local user"),
     ("account.service", "name", "Create a service user and token"),
     ("people.list", "", "List organisation principals"),
     ("token.create", "name", "Issue a personal API token"),
@@ -149,13 +161,21 @@ const OPS: &[(&str, &str, &str)] = &[
     ),
     ("skill.list", "", "List managed skills"),
     ("skill.show", "skill", "Read a skill"),
-    ("skill.create", "name body", "Author a Markdown skill"),
+    (
+        "skill.create",
+        "name body description",
+        "Author a Markdown skill",
+    ),
     (
         "skill.import",
         "name remote ref path",
         "Continuously import a skill from a Git remote on the server",
     ),
-    ("skill.edit", "skill body", "Edit a GUI-authored skill"),
+    (
+        "skill.edit",
+        "skill body name description",
+        "Edit a GUI-authored skill",
+    ),
     (
         "skill.attach",
         "skill target",
@@ -264,8 +284,7 @@ fn cli() -> Command {
         let (group, name) = op.split_once('.').unwrap_or(("", op));
         let mut c = Command::new(name).about(help);
         let positional = match op {
-            "open" | "path" | "mission.show" | "mission.update" | "mission.fork"
-            | "mission.archive" => Some("mission"),
+            "open" | "path" | "mission.show" | "mission.update" | "mission.fork" => Some("mission"),
             "read" | "pull" => Some("thread"),
             "search" => Some("query"),
             "shell-init" => Some("shell"),
@@ -284,7 +303,6 @@ fn cli() -> Command {
                 "confirm",
                 "fork",
                 "local",
-                "archived",
                 "print-path",
                 "oidc",
                 "no-browser",
@@ -342,7 +360,6 @@ pub fn main() -> Result<()> {
             "confirm",
             "fork",
             "local",
-            "archived",
             "print-path",
             "oidc",
             "no-browser",

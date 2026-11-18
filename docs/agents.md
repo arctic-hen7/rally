@@ -2,7 +2,7 @@
 
 ## Define a role
 
-In Agents, create a handle, select a model supported by your provider and write developer instructions. Give roles the context that makes them useful across tasks. For example, a reviewer can carry the team's compatibility policy and use the same editing and research tools as an implementer. The creator and organisation owner can edit a role. Changes apply to newly dispatched invocations.
+In Agents, create a handle, select a model supported by your provider and write developer instructions. Give roles the context that makes them useful across tasks. For example, a reviewer can carry the team's compatibility policy and use the same editing and research tools as an implementer. The creator, workspace admins and organisation owner can edit a role. Changes apply to newly dispatched invocations.
 
 Mention a role in a hosted thread to start it. An agent has one persistent native harness session per thread. Rally delivers unseen messages in order followed by the full addressing message. When the unseen history exceeds 100,000 characters the worker receives a file reference. An interrupted active session resumes with “We got interrupted, continue”. The working pane carries questions, steering and streamed output. Its final reply goes back into the parent conversation.
 
@@ -27,11 +27,11 @@ env_key = "TEAM_GATEWAY_TOKEN"
 wire_api = "responses"
 ```
 
-Set `RALLY_MODEL_PROVIDER=team` for the native adapter. Mount this file into both `/session/config.toml:ro` (hosted sessions) and `/root/.codex/config.toml:ro` (standalone commands). Supply the provider's token using the operator's runtime configuration. A preconfigured Codex profile can similarly supply the appropriate authentication file for your provider. Leave the rest of `/session` writable so Rally can resume native conversations. Each role chooses its own model ID. Set `RALLY_WIP_MODEL` for commit summaries if the default `gpt-6.2-luna` is unavailable. A WIP summary can also be entered manually.
+Set `RALLY_MODEL_PROVIDER=team` for the native adapter. Mount this file into both `/session/config.toml:ro` (hosted sessions) and `/root/.codex/config.toml:ro` (standalone commands). Supply the provider's token using the operator's runtime configuration. A preconfigured Codex profile can similarly supply the appropriate authentication file for your provider. Leave the rest of `/session` writable so Rally can resume native conversations. Each role chooses its own model ID. Set `RALLY_WIP_MODEL` for commit summaries if the default `gpt-6-luna` is unavailable. A WIP summary can also be entered manually.
 
 ## Share skills
 
-Create a Markdown skill in the GUI or import a Git remote, ref and optional subdirectory containing `SKILL.md`. Rally fetches the remote on the server, copies regular files and executable scripts, and periodically checks for new revisions. Attach the skill to a mission or a role by name in the GUI, or by ID with the CLI:
+In Skills, choose **New skill**, give it a name and description, and write its instructions in the Markdown editor. Use **Preview** to check formatting. Rally combines the metadata and instructions into a workspace-local `SKILL.md`. From the CLI use `rally skill create --name reviewer --description "Review proposed changes" --file review.md`. You can also import a Git remote, ref and optional subdirectory containing `SKILL.md`. Rally fetches the remote on the server, copies regular files and executable scripts, and periodically checks for new revisions. Attach the skill to a mission or a role by name in the GUI, or by ID with the CLI:
 
 ```sh
 rally skill import --name release-check --remote https://git.example.org/team/skills.git --ref main --path release-check

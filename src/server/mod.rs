@@ -41,6 +41,7 @@ pub struct Actor {
     uid: String,
     name: String,
     owner: bool,
+    admin: bool,
     run: Option<String>,
     routine: Option<String>,
 }
@@ -105,7 +106,7 @@ async fn execute(db: &PgPool, sql: &str, args: &[&str]) -> Result<()> {
 }
 
 fn admin(a: &Actor) -> Result<()> {
-    if !a.owner || a.run.is_some() || a.routine.is_some() {
+    if !(a.owner || a.admin) || a.run.is_some() || a.routine.is_some() {
         bail!("Access denied");
     }
     Ok(())
@@ -184,14 +185,17 @@ async fn rpc(
     let a = auth::actor(&app, &headers).await?;
     let result = match op.as_str() {
         "whoami" => {
-            json!({"id":a.uid,"name":a.name,"owner":a.owner,"run":a.run,"routine":a.routine})
+            json!({"id":a.uid,"name":a.name,"owner":a.owner,"admin":a.admin,"run":a.run,"routine":a.routine})
         }
         "topic.list" | "topic.create" | "mission.list" | "mission.show" | "mission.create"
-        | "mission.update" | "mission.archive" | "mission.fork" | "group.list" | "group.create"
-        | "group.add" | "group.remove" | "member.list" | "member.add" | "member.remove"
-        | "people.list" | "agent.list" | "agent.show" | "agent.create" | "agent.update"
-        | "account.service" | "account.invite" | "token.create" | "token.list" | "token.revoke" => {
+        | "mission.update" | "mission.fork" | "group.list" | "group.create" | "group.add"
+        | "group.remove" | "member.list" | "member.add" | "member.remove" | "people.list"
+        | "agent.list" | "agent.show" | "agent.create" | "agent.update" | "account.service"
+        | "account.invite" | "token.create" | "token.list" | "token.revoke" => {
             catalog::call(&app, &a, &op, &data).await?
+        }
+        s if s.starts_with("status.") || s == "account.role" => {
+            catalog::call(&app, &a, s, &data).await?
         }
         s if s.starts_with("skill.") => skills::call(&app, &a, s, &data).await?,
         s if s.starts_with("repo.") => git::call(&app, &a, s, &data).await?,

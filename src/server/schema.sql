@@ -12,8 +12,25 @@ CREATE TABLE IF NOT EXISTS group_members (group_id text REFERENCES groups, perso
 CREATE TABLE IF NOT EXISTS topics (slug text PRIMARY KEY, name text NOT NULL, seq integer NOT NULL DEFAULT 0);
 CREATE TABLE IF NOT EXISTS missions (
     id text PRIMARY KEY, topic text NOT NULL REFERENCES topics, title text NOT NULL, description text NOT NULL DEFAULT '',
-    archived boolean NOT NULL DEFAULT false, created timestamptz NOT NULL DEFAULT now()
+    created timestamptz NOT NULL DEFAULT now()
 );
+CREATE TABLE IF NOT EXISTS mission_statuses (
+    id text PRIMARY KEY, name text NOT NULL UNIQUE CHECK (btrim(name) <> ''),
+    color text NOT NULL, position integer NOT NULL
+);
+INSERT INTO mission_statuses(id,name,color,position)
+    SELECT initial.* FROM (VALUES ('open','Open','slate',0),('in-progress','In progress','amber',1),('done','Done','violet',2))
+    AS initial(id,name,color,position) WHERE NOT EXISTS (SELECT 1 FROM mission_statuses);
+ALTER TABLE missions ADD COLUMN IF NOT EXISTS status text NOT NULL DEFAULT 'open' REFERENCES mission_statuses(id);
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='missions' AND column_name='archived') THEN
+        UPDATE missions SET status='done' WHERE archived;
+        ALTER TABLE missions DROP COLUMN archived;
+    END IF;
+END $$;
+ALTER TABLE people ADD COLUMN IF NOT EXISTS admin boolean NOT NULL DEFAULT false;
+ALTER TABLE invites ADD COLUMN IF NOT EXISTS admin boolean NOT NULL DEFAULT false;
 CREATE TABLE IF NOT EXISTS members (mission text REFERENCES missions, principal text NOT NULL, PRIMARY KEY(mission,principal));
 CREATE TABLE IF NOT EXISTS repos (mission text REFERENCES missions, name text NOT NULL, remote text NOT NULL, branch text NOT NULL,
     recovery text, status jsonb NOT NULL DEFAULT '{}', PRIMARY KEY(mission,name));
@@ -75,7 +92,7 @@ CREATE TABLE IF NOT EXISTS oidc_flows (
     state text PRIMARY KEY, nonce text NOT NULL, verifier text NOT NULL, expires timestamptz NOT NULL, cli boolean NOT NULL DEFAULT false
 );
 CREATE OR REPLACE FUNCTION can_read(uid text, mid text) RETURNS boolean LANGUAGE sql STABLE AS $$
-    SELECT EXISTS(SELECT 1 FROM people WHERE id=uid AND owner)
+    SELECT EXISTS(SELECT 1 FROM people WHERE id=uid AND (owner OR admin))
     OR EXISTS(SELECT 1 FROM members WHERE mission=mid AND (principal=uid OR principal IN
         (SELECT group_id FROM group_members WHERE person=uid)))
 $$;
@@ -90,3 +107,4 @@ CREATE TABLE IF NOT EXISTS cli_codes (digest text PRIMARY KEY, person text REFER
 ALTER TABLE people ADD COLUMN IF NOT EXISTS push_settings jsonb NOT NULL DEFAULT '{"mentions":true,"questions":true,"outcomes":true,"following":true}';
 ALTER TABLE messages ADD COLUMN IF NOT EXISTS native_reply jsonb;
 ALTER TABLE runs ADD COLUMN IF NOT EXISTS next_input bigint REFERENCES messages;
+ALTER TABLE skills ADD COLUMN IF NOT EXISTS description text NOT NULL DEFAULT '';

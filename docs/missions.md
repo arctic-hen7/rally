@@ -31,3 +31,9 @@ The inbox records direct mentions, agent questions and outcomes for work you dis
 On a secure origin, install Rally through the browser's PWA menu. In Settings, enable push separately on each device and accept the browser permission dialog. The operator must configure VAPID for background notifications.
 
 Use the push preferences in Settings to choose mentions, questions, outcomes and followed threads across all your subscribed devices. The inbox remains available when device delivery is disabled.
+
+## Mission statuses and administrators
+
+Every mission starts in Open. Use the status picker beneath the mission title to move it through your workflow. The owner or an admin can create, rename, recolor and remove unused statuses in Settings. Renaming a status keeps existing assignments. Missions in Done remain accessible in the sidebar and search.
+
+The owner can invite a local user as an admin or promote a signed-in OIDC user in Settings under **Account roles**. An admin can read and manage every mission and edit workspace resources. Only the owner can invite human users and grant or remove admin access. Demoting an admin restores their ordinary membership and group grants.

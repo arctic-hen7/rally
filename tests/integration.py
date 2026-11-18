@@ -217,6 +217,78 @@ class Suite:
             flush=True,
         )
 
+    def workspace_settings(self):
+        self.req("account.role", {"person": self.bob_id, "role": "admin"})
+        assert self.req("whoami", token=self.bob)["admin"]
+        assert len(self.req("mission.list", token=self.bob)) == 2
+        self.req("account.invite", {"email": "new@example.test"}, self.bob, denied=True)
+        self.req(
+            "account.role",
+            {"person": self.bob_id, "role": "member"},
+            self.bob,
+            denied=True,
+        )
+        status = self.req(
+            "status.create", {"name": "In review", "color": "teal"}, self.bob
+        )["id"]
+        assert self.req("mission.show", {"mission": self.mid})["status"] == "open"
+        self.req("mission.update", {"mission": self.mid, "status": status}, self.bob)
+        assert self.req("mission.list", {"status": status})[0]["id"] == self.mid
+        self.req(
+            "status.update", {"status": status, "name": "Review", "color": "amber"}
+        )
+        self.req("status.remove", {"status": status}, denied=True)
+        self.req("mission.update", {"mission": self.mid, "status": "open"})
+        self.req("status.remove", {"status": status})
+        self.req("account.role", {"person": self.bob_id, "role": "member"})
+        self.req("read", {"thread": self.secret}, self.bob, denied=True)
+        self.req(
+            "status.create",
+            {"name": "Forbidden", "color": "rose"},
+            self.bob,
+            denied=True,
+        )
+        invite = self.req(
+            "account.invite", {"email": "dev@example.test", "role": "admin"}
+        )
+        admin = self.req(
+            "/auth/register",
+            {
+                "email": "dev@example.test",
+                "password": PASSWORD,
+                "code": invite["code"],
+                "name": "Admin",
+                "cli": True,
+            },
+        )["token"]
+        assert self.req("whoami", token=admin)["admin"]
+        authored = self.req(
+            "skill.create",
+            {
+                "name": "notes",
+                "description": "Review: meeting notes",
+                "body": "## Instructions\nRead the notes.",
+            },
+        )["id"]
+        self.req(
+            "skill.edit",
+            {
+                "skill": authored,
+                "description": "Write meeting notes",
+                "body": "Summarise decisions.",
+            },
+        )
+        self.req("skill.attach", {"skill": authored, "target": self.mid})
+        content = self.req("skill.bundle", {"mission": self.mid})["notes"]["SKILL.md"][
+            "data"
+        ]
+        assert b"description: Write meeting notes" in base64.b64decode(content)
+        assert base64.b64decode(content).endswith(b"Summarise decisions.")
+        print(
+            "Passed: admin grants and revocation, status transitions, authored skill metadata",
+            flush=True,
+        )
+
     def oidc(self):
         opener = urllib.request.build_opener(
             urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar())
@@ -231,6 +303,14 @@ class Suite:
 
         user = who()
         assert user["name"] == "OIDC Teammate" and not user["owner"]
+        self.req("account.role", {"person": user["id"], "role": "admin"})
+        assert who()["admin"] is True
+        see = urllib.request.Request(
+            self.url + "/api/mission.list", b"{}", {"Content-Type": "application/json"}
+        )
+        assert len(json.load(opener.open(see))) == 2
+        self.req("account.role", {"person": user["id"], "role": "member"})
+        assert json.load(opener.open(see)) == []
         cli_env = dict(self.env, RALLY_CONFIG_DIR=str(self.root / "oidc-profile"))
         process = subprocess.Popen(
             [BIN / "rally", "--json", "login", "--oidc", "--no-browser"],
@@ -259,7 +339,7 @@ class Suite:
             "agent.create",
             {
                 "name": "engineer",
-                "model": "gpt-6.2-luna",
+                "model": "gpt-6.2-sol",
                 "instructions": "Record design decisions.",
             },
         )["id"]
@@ -671,6 +751,7 @@ def main():
             try:
                 suite.server()
                 suite.auth()
+                suite.workspace_settings()
                 suite.oidc()
                 suite.conversations()
                 suite.git_and_skills()

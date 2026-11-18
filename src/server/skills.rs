@@ -97,13 +97,22 @@ async fn load(app: &App, s: &Value) -> Result<()> {
     if body.is_empty() {
         bail!("The selected Git directory requires SKILL.md");
     }
-    sqlx::query("UPDATE skills SET body=$2,revision=$3,files=$4,sync_error=NULL WHERE id=$1")
-        .bind(sid)
-        .bind(body)
-        .bind(rev)
-        .bind(bundle)
-        .execute(&app.db)
-        .await?;
+    let description = body
+        .strip_prefix("---\n")
+        .and_then(|s| s.split_once("\n---"))
+        .and_then(|(meta, _)| serde_yaml_ng::from_str::<Value>(meta).ok())
+        .and_then(|v| v["description"].as_str().map(str::to_owned))
+        .unwrap_or_default();
+    sqlx::query(
+        "UPDATE skills SET body=$2,revision=$3,files=$4,description=$5,sync_error=NULL WHERE id=$1",
+    )
+    .bind(sid)
+    .bind(body)
+    .bind(rev)
+    .bind(bundle)
+    .bind(description)
+    .execute(&app.db)
+    .await?;
     Ok(())
 }
 
@@ -140,14 +149,17 @@ pub async fn call(app: &App, a: &Actor, op: &str, d: &Value) -> Result<Value> {
         "skill.create"|"skill.import"=>{
             personal(a)?;let name=slug(field(d,"name")?)?;if name=="rally"{bail!("The rally skill is built in");}
             let sid=id("sk");
-            if op=="skill.import"{remote(field(d,"remote")?)?;}else{field(d,"body")?;}
-            sqlx::query("INSERT INTO skills(id,name,body,remote,ref,path,creator) VALUES($1,$2,$3,$4,$5,$6,$7)").bind(&sid).bind(name).bind(opt(d,"body")).bind(d["remote"].as_str()).bind(d["ref"].as_str()).bind(d["path"].as_str()).bind(&a.uid).execute(&app.db).await?;
+            if op=="skill.import"{remote(field(d,"remote")?)?;}else{field(d,"body")?;field(d,"description")?;}
+            sqlx::query("INSERT INTO skills(id,name,body,remote,ref,path,creator,description) VALUES($1,$2,$3,$4,$5,$6,$7,$8)").bind(&sid).bind(name).bind(opt(d,"body")).bind(d["remote"].as_str()).bind(d["ref"].as_str()).bind(d["path"].as_str()).bind(&a.uid).bind(opt(d,"description")).execute(&app.db).await?;
             if op=="skill.import"{let s=one(&app.db,"SELECT to_jsonb(s)-'files' FROM skills s WHERE id=$1",&[&sid]).await?;if let Err(e)=load(app,&s).await{execute(&app.db,"UPDATE skills SET sync_error=$2 WHERE id=$1",&[&sid,&e.to_string()]).await?;return Err(e);}}
             Ok(json!({"id":sid}))
         }
         "skill.edit"=>{
             personal(a)?;
-            let result=sqlx::query("UPDATE skills SET body=$2 WHERE (id=$1 OR name=$1) AND remote IS NULL AND (creator=$3 OR $4)").bind(field(d,"skill")?).bind(field(d,"body")?).bind(&a.uid).bind(a.owner).execute(&app.db).await?;
+            let name=d["name"].as_str().map(slug).transpose()?;
+            if d.get("description").is_some(){field(d,"description")?;}
+            if name==Some("rally"){bail!("The rally skill is built in");}
+            let result=sqlx::query("UPDATE skills SET body=$2,name=COALESCE($5,name),description=COALESCE($6,description) WHERE (id=$1 OR name=$1) AND remote IS NULL AND (creator=$3 OR $4)").bind(field(d,"skill")?).bind(field(d,"body")?).bind(&a.uid).bind(a.owner || a.admin).bind(name).bind(d["description"].as_str()).execute(&app.db).await?;
             if result.rows_affected()==0{bail!("Edit imported skills in Git, or check ownership");}
             Ok(json!({"ok":true}))
         }
@@ -155,7 +167,7 @@ pub async fn call(app: &App, a: &Actor, op: &str, d: &Value) -> Result<Value> {
             personal(a)?;
             let input=field(d,"target")?.trim_start_matches('#');
             let target=if let Some(agent)=sqlx::query("SELECT id,creator FROM agents WHERE id=$1 OR name=$1").bind(input.trim_start_matches('@')).fetch_optional(&app.db).await?{
-                if !a.owner && agent.get::<String,_>("creator")!=a.uid{bail!("Access denied");}agent.get("id")
+                if !(a.owner || a.admin) && agent.get::<String,_>("creator")!=a.uid{bail!("Access denied");}agent.get("id")
             }else{mission(app,a,input,true).await?};
             let sid:String=sqlx::query_scalar("SELECT id FROM skills WHERE id=$1 OR name=$1").bind(field(d,"skill")?).fetch_one(&app.db).await?;
             execute(&app.db,if op=="skill.attach"{"INSERT INTO attachments VALUES($1,$2) ON CONFLICT DO NOTHING"}else{"DELETE FROM attachments WHERE skill=$1 AND target=$2"},&[&sid,&target]).await?;
@@ -168,9 +180,15 @@ pub async fn call(app: &App, a: &Actor, op: &str, d: &Value) -> Result<Value> {
 pub async fn bundle(app: &App, mid: &str, agent: &str) -> Result<Value> {
     let mut result =
         json!({"rally":{"SKILL.md":{"data":STANDARD.encode(RALLY_SKILL),"executable":false}}});
-    for row in sqlx::query("SELECT DISTINCT s.id,s.name,s.body,s.files FROM skills s JOIN attachments t ON t.skill=s.id WHERE t.target=$1 OR t.target=$2").bind(mid).bind(agent).fetch_all(&app.db).await?{
+    for row in sqlx::query("SELECT DISTINCT s.id,s.name,s.body,s.files,s.remote,s.description FROM skills s JOIN attachments t ON t.skill=s.id WHERE t.target=$1 OR t.target=$2").bind(mid).bind(agent).fetch_all(&app.db).await?{
         let name:&str=row.get("name");let mut files:Value=row.get("files");
-        files["SKILL.md"]=json!({"data":STANDARD.encode(row.get::<String,_>("body")),"executable":false});
+        let mut body:String=row.get("body");
+        let description:&str=row.get("description");
+        if row.get::<Option<String>,_>("remote").is_none() && !description.is_empty() {
+            let meta=serde_yaml_ng::to_string(&json!({"name":name,"description":description}))?;
+            body=format!("---\n{meta}---\n\n{body}");
+        }
+        files["SKILL.md"]=json!({"data":STANDARD.encode(body),"executable":false});
         result[name]=files;
     }
     Ok(result)

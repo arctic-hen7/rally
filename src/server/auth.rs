@@ -46,11 +46,12 @@ pub async fn actor(app: &App, headers: &HeaderMap) -> Result<Actor> {
         .or_else(|| cookie(headers, "rally_session"))
         .ok_or_else(|| anyhow::anyhow!("Sign in required"))?;
     let hash = digest(token);
-    let row=sqlx::query("SELECT p.id,p.name,p.owner,NULL::text AS run,NULL::text AS routine FROM tokens t JOIN people p ON p.id=t.person WHERE t.digest=$1 AND (t.expires IS NULL OR t.expires>now()) UNION ALL SELECT p.id,a.name,false,r.id,NULL FROM runs r JOIN people p ON p.id=r.dispatcher JOIN sessions s ON s.id=r.session JOIN agents a ON a.id=s.agent WHERE r.token_digest=$1 AND r.status='working' UNION ALL SELECT p.id,t.name,p.owner,NULL,t.id FROM jobs j JOIN people p ON p.id=j.owner_id JOIN routines t ON t.id=j.routine WHERE j.token_digest=$1 AND j.status='working'").bind(hash).fetch_optional(&app.db).await?.ok_or_else(||anyhow::anyhow!("Sign in required"))?;
+    let row=sqlx::query("SELECT p.id,p.name,p.owner,p.admin,NULL::text AS run,NULL::text AS routine FROM tokens t JOIN people p ON p.id=t.person WHERE t.digest=$1 AND (t.expires IS NULL OR t.expires>now()) UNION ALL SELECT p.id,a.name,false,false,r.id,NULL FROM runs r JOIN people p ON p.id=r.dispatcher JOIN sessions s ON s.id=r.session JOIN agents a ON a.id=s.agent WHERE r.token_digest=$1 AND r.status='working' UNION ALL SELECT p.id,t.name,p.owner,p.admin,NULL,t.id FROM jobs j JOIN people p ON p.id=j.owner_id JOIN routines t ON t.id=j.routine WHERE j.token_digest=$1 AND j.status='working'").bind(hash).fetch_optional(&app.db).await?.ok_or_else(||anyhow::anyhow!("Sign in required"))?;
     Ok(Actor {
         uid: row.get("id"),
         name: row.get("name"),
         owner: row.get("owner"),
+        admin: row.get("admin"),
         run: row.get("run"),
         routine: row.get("routine"),
     })
@@ -129,27 +130,26 @@ pub async fn endpoint(
                 {
                     return Err(anyhow::anyhow!("Access denied").into());
                 }
-            } else if sqlx::query(
-                "DELETE FROM invites WHERE digest=$1 AND lower(email)=$2 AND expires>now()",
-            )
-            .bind(digest(field(&data, "code")?))
-            .bind(&email)
-            .execute(&mut *tx)
-            .await?
-            .rows_affected()
-                != 1
-            {
-                return Err(anyhow::anyhow!("Invalid invitation").into());
             }
+            let admin = if owner {
+                false
+            } else {
+                sqlx::query_scalar::<_,bool>("DELETE FROM invites WHERE digest=$1 AND lower(email)=$2 AND expires>now() RETURNING admin")
+                    .bind(digest(field(&data,"code")?)).bind(&email).fetch_optional(&mut *tx).await?
+                    .ok_or_else(|| anyhow::anyhow!("Invalid invitation"))?
+            };
             let uid = id("u");
-            sqlx::query("INSERT INTO people(id,name,email,password,owner) VALUES($1,$2,$3,$4,$5)")
-                .bind(&uid)
-                .bind(field(&data, "name")?)
-                .bind(email)
-                .bind(hash)
-                .bind(owner)
-                .execute(&mut *tx)
-                .await?;
+            sqlx::query(
+                "INSERT INTO people(id,name,email,password,owner,admin) VALUES($1,$2,$3,$4,$5,$6)",
+            )
+            .bind(&uid)
+            .bind(field(&data, "name")?)
+            .bind(email)
+            .bind(hash)
+            .bind(owner)
+            .bind(admin)
+            .execute(&mut *tx)
+            .await?;
             tx.commit().await?;
             login(&app, &uid, cli).await
         }

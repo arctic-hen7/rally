@@ -40,7 +40,7 @@ A single thread export contains its title, mission and a list of source/message 
 ## Post and dispatch
 
 ```sh
-rally agent create --name reviewer --model gpt-6.2-luna --file reviewer.md
+rally agent create --name reviewer --model gpt-6.2-sol --file reviewer.md
 rally post --thread '#dev-12' --mention reviewer --confirm --body 'Review the retry logic.'
 rally post --thread '#dev-12' --link '#dev-5:Provider discussion' --mention reviewer --file follow-up.md
 rally run list --mission dev-12
@@ -52,9 +52,11 @@ Use `--mention` and `--link` to send structured references from scripts. The fir
 
 | Commands | What they change or read |
 | --- | --- |
-| `topic list/create`, `mission list/show/create/update/fork/archive` | Organise tasks. `mission update dev-12 --title … --description …` edits the manifest's descriptive fields. |
+| `topic list/create`, `mission list/show/create/update/fork` | Organise tasks. `mission update dev-12 --title … --description …` edits its descriptive fields. Use `rally status list` to find a status ID and `rally mission update dev-12 --status ID` to apply it. |
 | `repo add/list/status/remove/push/return`, `sync`, `wip` | Manage branch bindings and hosted changes. Use `wip --mission dev-12 --name project --fork` for a recovery branch. |
 | `thread create/rename/subscribe/mute`, `inbox list/read` | Manage conversations and subscriptions. |
+| `status list/create/update/remove` | List workflow statuses or manage their display names and colors. |
+| `account invite --email … --role admin`, `account role --person ID --role member` | Invite a local admin or change an existing human account’s role as organisation owner. |
 | `people list`, `member add/remove/list`, `group create/add/remove/list` | Manage access by individual or group IDs. |
 | `agent list/show/create/update`, `skill create/edit/import/attach/detach/list/show` | Manage roles, instructions, models and reusable skills. |
 | `routine create/update/show/list/trigger/enable/disable/transfer` | Run and maintain cron and webhook scripts. |

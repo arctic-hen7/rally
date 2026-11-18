@@ -55,7 +55,7 @@ impl Wire {
 }
 
 pub async fn summary(app: &App, root: &Path, prompt: &str) -> Result<String> {
-    let model = var("RALLY_WIP_MODEL", "gpt-6.2-luna");
+    let model = var("RALLY_WIP_MODEL", "gpt-6-luna");
     let args = [
         "exec",
         "--ephemeral",
