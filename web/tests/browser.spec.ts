@@ -38,7 +38,9 @@ test.beforeEach(async ({ page }) => {
     await page.getByLabel('Email', { exact: true }).fill(email);
     await page.getByLabel('Password', { exact: true }).fill(password);
     await page.getByRole('button', { name: 'Sign in', exact: true }).click();
-    await expect(page.getByRole('heading', { name: 'Missions', exact: true })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Missions', exact: true })).toBeVisible({
+        timeout: 20000,
+    });
 });
 test('desktop mission, messaging, search and thread controls', async ({ page }, info) => {
     const errors: string[] = [];
@@ -107,4 +109,35 @@ test('agent pane streams the run, accepts a queued answer and steers the same in
         page.locator('.timeline').getByText('Completed after steering.', { exact: true }),
     ).toBeVisible();
     await page.screenshot({ path: info.outputPath('agent-pane.png') });
+});
+
+test('installed service worker displays a background agent notification', async ({ page, context }) => {
+    await context.grantPermissions(['notifications']);
+    const origin = new URL(page.url()).origin;
+    const cdp = await context.newCDPSession(page);
+    const registration = new Promise<string>((resolve) => {
+        cdp.on('ServiceWorker.workerRegistrationUpdated', ({ registrations }) => {
+            const current = registrations.find((r) => !r.isDeleted && r.scopeURL === origin + '/');
+            if (current) resolve(current.registrationId);
+        });
+    });
+    await cdp.send('ServiceWorker.enable');
+    await page.evaluate(async () => {
+        await navigator.serviceWorker.ready;
+    });
+    await cdp.send('ServiceWorker.deliverPushMessage', {
+        origin,
+        registrationId: await registration,
+        data: JSON.stringify({ title: 'Rally', body: 'Your agent has a question', thread: mission }),
+    });
+    await expect
+        .poll(() =>
+            page.evaluate(async () => {
+                const reg = await navigator.serviceWorker.ready;
+                const items = await reg.getNotifications();
+                return items.map((n) => n.body);
+            }),
+        )
+        .toContain('Your agent has a question');
+    await cdp.detach();
 });

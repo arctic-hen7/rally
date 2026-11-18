@@ -1,0 +1,13 @@
+services:
+    provider:
+        image: docker.io/library/python:3.13-alpine
+        command: ["python","/fixture/provider.py"]
+        volumes:
+            - ${PWD}/tests:/fixture:ro
+        networks:
+            default:
+                aliases: [rally-it-provider]
+    server:
+        environment:
+            RALLY_RUNTIME_MOUNTS: '["${PWD}/tests/provider.toml:/session/config.toml:ro","${PWD}/tests/provider.toml:/root/.codex/config.toml:ro"]'
+            RALLY_MODEL_PROVIDER: rallytest

@@ -1,0 +1,9 @@
+model = "gpt-6-luna"
+model_provider = "rallytest"
+model_reasoning_effort = "low"
+[model_providers.rallytest]
+name = "Rally offline integration fixture"
+base_url = "http://rally-it-provider:8080/v1"
+wire_api = "responses"
+requires_openai_auth = false
+supports_websockets = false
