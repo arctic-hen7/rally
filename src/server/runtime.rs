@@ -190,7 +190,13 @@ async fn drive(app: &App, rid: &str, token: &str, resuming: bool) -> Result<()> 
     let mut env = environment()?;
     env.extend(super::secrets::environment(app, mid, Some(field(&r, "agent")?)).await?);
     env.extend(lease.env.clone());
-    let git = connections::Lease::new(app, connections::Scope::Mission(mid.into()));
+    let git = connections::Lease::new(
+        app,
+        connections::Scope::Run {
+            mission: mid.into(),
+            run: rid.into(),
+        },
+    );
     env.extend(git.env());
     env.extend([
         ("RALLY_URL".into(), var("RALLY_WORKER_URL", &app.base)),

@@ -94,11 +94,13 @@ async fn post_hosted(
             .execute(&mut **tx)
             .await?;
     }
-    sqlx::query("INSERT INTO participants VALUES($1,$2) ON CONFLICT DO NOTHING")
-        .bind(tid)
-        .bind(&actor)
-        .execute(&mut **tx)
-        .await?;
+    if !silent || a.routine.is_none() {
+        sqlx::query("INSERT INTO participants VALUES($1,$2) ON CONFLICT DO NOTHING")
+            .bind(tid)
+            .bind(&actor)
+            .execute(&mut **tx)
+            .await?;
+    }
     let mut agents = vec![];
     for name in strings(&d["mentions"]) {
         let handle = name.trim_start_matches('@');

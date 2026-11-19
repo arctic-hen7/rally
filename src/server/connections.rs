@@ -56,6 +56,10 @@ pub async fn validate(
 #[derive(Clone)]
 pub enum Scope {
     Mission(String),
+    Run {
+        mission: String,
+        run: String,
+    },
     Job(String),
     Source {
         remote: String,
@@ -81,6 +85,7 @@ impl Lease {
     pub fn new(app: &App, scope: Scope) -> Self {
         let key = match &scope {
             Scope::Mission(id) | Scope::Job(id) => id.as_str(),
+            Scope::Run { mission, .. } => mission.as_str(),
             Scope::Source { .. } => "source",
         };
         let base = format!(
@@ -186,6 +191,15 @@ async fn forward(
         (&Method::GET, "info/refs", Some("service=git-receive-pack"))
         | (&Method::POST, "git-receive-pack", None) => "git-receive-pack",
         _ => bail!("Invalid Git operation"),
+    };
+    let scope = if let Scope::Run { mission, run } = scope {
+        let active:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM runs r JOIN sessions s ON s.id=r.session JOIN threads t ON t.id=s.thread JOIN members m ON m.mission=t.mission AND m.principal=s.agent WHERE r.id=$1 AND t.mission=$2 AND r.status='working')").bind(run).bind(&mission).fetch_one(&app.db).await?;
+        if !active {
+            bail!("Access denied");
+        }
+        Scope::Mission(mission)
+    } else {
+        scope
     };
     let (remote, owner, connection) = match scope {
         Scope::Mission(mid) if key == mid => {

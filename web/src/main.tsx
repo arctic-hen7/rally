@@ -138,10 +138,13 @@ function App() {
         };
     }, [me]);
     useEffect(() => {
+        let lastAddress: string | undefined;
         function route() {
-            const address = location.hash;
+            const address = location.hash.split('?')[0];
             setForm(history.state?.rallyForm || null);
-            const [kind, key, _, rid] = location.hash
+            if (address === lastAddress) return;
+            lastAddress = address;
+            const [kind, key, _, rid] = address
                 .slice(1)
                 .split('?')[0]
                 .split('/')
@@ -154,7 +157,7 @@ function App() {
                 setTid(key);
                 api('thread.show', { thread: key })
                     .then((x) => {
-                        if (location.hash === address) setMid(x.thread.mission);
+                        if (location.hash.split('?')[0] === address) setMid(x.thread.mission);
                     })
                     .catch((e) => setError(e.message));
             } else if (kind === 'mission' && key) {

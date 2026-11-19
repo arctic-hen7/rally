@@ -101,7 +101,23 @@ async fn reconcile(app: &App, r: &Value, idle: bool) -> Result<Value> {
         &["config", "--get", "remote.origin.url"],
     )
     .await?;
-    if configured == remote_name {
+    let recorded = command(
+        app,
+        &root,
+        Some(name),
+        &["config", "--get", "rally.upstream"],
+    )
+    .await
+    .ok();
+    let broker_path = format!("/git/{mid}/{name}");
+    let managed = recorded.as_deref() == Some(remote_name)
+        && url::Url::parse(&configured).is_ok_and(|u| u.path().ends_with(&broker_path));
+    if configured != remote_name && !managed {
+        bail!(
+            "Existing checkout has a different origin. Choose a new checkout name or move the old checkout before refreshing"
+        );
+    }
+    if configured != proxy {
         command(
             app,
             &root,
@@ -109,6 +125,8 @@ async fn reconcile(app: &App, r: &Value, idle: bool) -> Result<Value> {
             &["remote", "set-url", "origin", &proxy],
         )
         .await?;
+    }
+    if recorded.as_deref() != Some(remote_name) {
         command(
             app,
             &root,
@@ -116,19 +134,6 @@ async fn reconcile(app: &App, r: &Value, idle: bool) -> Result<Value> {
             &["config", "rally.upstream", remote_name],
         )
         .await?;
-    } else if configured != proxy
-        || command(
-            app,
-            &root,
-            Some(name),
-            &["config", "--get", "rally.upstream"],
-        )
-        .await?
-            != remote_name
-    {
-        bail!(
-            "Existing checkout has a different origin. Choose a new checkout name or move the old checkout before refreshing"
-        );
     }
     command(app, &root, Some(name), &["fetch", "--prune", "origin"]).await?;
     let mut active = command(app, &root, Some(name), &["branch", "--show-current"]).await?;

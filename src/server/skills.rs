@@ -1,6 +1,7 @@
 use super::*;
 use base64::{Engine, engine::general_purpose::STANDARD};
-use rally_teams::{remote, slug};
+use rally_teams::slug;
+use sqlx::{Postgres, Transaction};
 use std::path::{Component, Path};
 use tokio::process::Command;
 
@@ -58,11 +59,7 @@ async fn load(app: &App, sid: &str, reconnect: Option<(&str, Option<&str>)>) -> 
     if s["git_paused"] == true && reconnect.is_none() {
         return Ok(());
     }
-    let (owner, connection) = reconnect.unwrap_or((
-        s["git_owner"].as_str().unwrap_or(field(&s, "creator")?),
-        s["connection"].as_str(),
-    ));
-    if reconnect.is_some() {
+    if let Some((owner, connection)) = reconnect {
         sqlx::query("UPDATE skills SET git_owner=$2,connection=$3,git_paused=false WHERE id=$1")
             .bind(sid)
             .bind(owner)
@@ -70,7 +67,38 @@ async fn load(app: &App, sid: &str, reconnect: Option<(&str, Option<&str>)>) -> 
             .execute(&mut *tx)
             .await?;
     }
-    let url = remote(field(&s, "remote")?)?;
+    let (owner, connection) = reconnect.unwrap_or((
+        s["git_owner"].as_str().unwrap_or(field(&s, "creator")?),
+        s["connection"].as_str(),
+    ));
+    let result = fetch_snapshot(app, &mut tx, &s, owner, connection).await;
+    if let Err(error) = &result {
+        if reconnect.is_some() {
+            return result;
+        }
+        let details = error.to_string();
+        let paused =
+            details.contains("returned error: 403") || details.contains("returned error: 404");
+        sqlx::query("UPDATE skills SET sync_error=$2,git_paused=$3 WHERE id=$1")
+            .bind(sid)
+            .bind(details)
+            .bind(paused)
+            .execute(&mut *tx)
+            .await?;
+    }
+    tx.commit().await?;
+    result
+}
+
+async fn fetch_snapshot(
+    app: &App,
+    tx: &mut Transaction<'_, Postgres>,
+    s: &Value,
+    owner: &str,
+    connection: Option<&str>,
+) -> Result<()> {
+    let sid = field(s, "id")?;
+    let url = field(s, "remote")?;
     let dir = app.root.join("library").join(sid);
     tokio::fs::create_dir_all(&dir).await?;
     if !dir.join("HEAD").exists() {
@@ -84,35 +112,23 @@ async fn load(app: &App, sid: &str, reconnect: Option<(&str, Option<&str>)>) -> 
         bail!("Invalid skill ref");
     }
     let lease = connections::source(app, url, owner, connection);
-    if let Err(error) = git(
+    git(
         &dir,
         &lease.env(),
         &["fetch", "--depth=1", "--", &lease.url("repo"), branch],
     )
-    .await
-    {
-        if reconnect.is_none() {
-            sqlx::query("UPDATE skills SET sync_error=$2,git_paused=$2 LIKE '%403%' WHERE id=$1")
-                .bind(sid)
-                .bind(error.to_string())
-                .execute(&mut *tx)
-                .await?;
-            tx.commit().await?;
-        }
-        return Err(error);
-    }
+    .await?;
     let rev = String::from_utf8(git(&dir, &[], &["rev-parse", "FETCH_HEAD"]).await?)?
         .trim()
         .to_string();
     if s["revision"] == rev {
         sqlx::query("UPDATE skills SET sync_error=NULL,last_fetch=now() WHERE id=$1")
             .bind(sid)
-            .execute(&mut *tx)
+            .execute(&mut **tx)
             .await?;
-        tx.commit().await?;
         return Ok(());
     }
-    let sub = opt(&s, "path");
+    let sub = opt(s, "path");
     let tree = if sub.is_empty() {
         rev.clone()
     } else {
@@ -163,14 +179,9 @@ async fn load(app: &App, sid: &str, reconnect: Option<(&str, Option<&str>)>) -> 
     .bind(rev)
     .bind(bundle)
     .bind(description)
-    .execute(&mut *tx)
+    .execute(&mut **tx)
     .await?;
-    tx.commit().await?;
     Ok(())
-}
-
-async fn record_sync_error(app: &App, sid: &str, error: &anyhow::Error) -> Result<()> {
-    execute(&app.db,"UPDATE skills SET sync_error=$2 WHERE id=$1 AND NOT git_paused AND sync_error IS DISTINCT FROM $2", &[sid,&error.to_string()]).await
 }
 
 pub async fn refresh(app: &App) -> Result<()> {
@@ -180,7 +191,7 @@ pub async fn refresh(app: &App) -> Result<()> {
             .await?;
     for sid in imports {
         if let Err(error) = load(app, &sid, None).await {
-            record_sync_error(app, &sid, &error).await?;
+            eprintln!("Skill {sid}: {error}");
         }
     }
     Ok(())
@@ -203,11 +214,16 @@ pub async fn call(app: &App, a: &Actor, op: &str, d: &Value) -> Result<Value> {
                 connections::validate(app,&a.uid,url,cid.as_deref()).await?;
                 cid
             }else{field(d,"body")?;field(d,"description")?;if d.get("remote").is_some(){bail!("Use skill import for a Git source");}None};
-            sqlx::query("INSERT INTO skills(id,name,body,remote,ref,path,creator,description,private,git_owner,connection) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$7,$10)").bind(&sid).bind(name).bind(opt(d,"body")).bind(d["remote"].as_str()).bind(d["ref"].as_str()).bind(d["path"].as_str()).bind(&a.uid).bind(opt(d,"description")).bind(d["private"]==true).bind(cid).execute(&app.db).await?;
-            if op=="skill.import" && let Err(error)=load(app,&sid,None).await {
-                record_sync_error(app,&sid,&error).await?;
+            let _guard=if op=="skill.import"{Some(app.skill_lock.lock().await)}else{None};
+            let mut tx=app.db.begin().await?;
+            let source: Value=sqlx::query_scalar("INSERT INTO skills AS s(id,name,body,remote,ref,path,creator,description,private,git_owner,connection) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$7,$10) RETURNING to_jsonb(s)-'files'")
+                .bind(&sid).bind(name).bind(opt(d,"body")).bind(d["remote"].as_str()).bind(d["ref"].as_str()).bind(d["path"].as_str()).bind(&a.uid).bind(opt(d,"description")).bind(d["private"]==true).bind(&cid).fetch_one(&mut *tx).await?;
+            if op=="skill.import" && let Err(error)=fetch_snapshot(app,&mut tx,&source,&a.uid,cid.as_deref()).await{
+                tx.rollback().await?;
+                let _=tokio::fs::remove_dir_all(app.root.join("library").join(&sid)).await;
                 return Err(error);
             }
+            tx.commit().await?;
             Ok(json!({"id":sid}))
         }
         "skill.reconnect"=>{
