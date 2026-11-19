@@ -21,6 +21,8 @@ COPY scripts/fetch-embeddings.sh /opt/rally/
 RUN sh /opt/rally/fetch-embeddings.sh /opt/rally/embeddings
 ARG RALLY_RUNTIME_IMAGE=localhost/rally-runtime:local
 ARG RALLY_RUNTIME_MODE=build
+# Include the selected worker in Podman's layer cache key before persisting these defaults
+RUN test -n "$RALLY_RUNTIME_IMAGE" && { [ "$RALLY_RUNTIME_MODE" = build ] || [ "$RALLY_RUNTIME_MODE" = pull ]; }
 ENV RALLY_RUNTIME_IMAGE=$RALLY_RUNTIME_IMAGE RALLY_RUNTIME_MODE=$RALLY_RUNTIME_MODE
 ENV RALLY_WEB_DIR=/opt/rally/web RALLY_EMBEDDING_DIR=/opt/rally/embeddings
 ENTRYPOINT ["rally-server"]
