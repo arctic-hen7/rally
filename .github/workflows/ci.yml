@@ -25,6 +25,8 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - uses: oven-sh/setup-bun@v2
       - run: sudo apt-get update && sudo apt-get install -y libssl-dev libcurl4-openssl-dev pkg-config postgresql-client
+      - name: Verify source-free Compose bundle
+        run: python3 tests/release_compose.py
       - run: cargo fmt --all --check && cargo test --locked && cargo build --locked --bins
       - working-directory: web
         run: bun install --frozen-lockfile && bun x tsc --noEmit && bun run build && bun x playwright install --with-deps chromium

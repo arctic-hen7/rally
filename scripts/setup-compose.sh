@@ -6,7 +6,7 @@ if [ -f .env ] && grep -Eq '^[[:space:]]*(export[[:space:]]+)?RALLY_CODEX_CONFIG
     exit 0
 fi
 if [ ! -f examples/config.toml ]; then
-    echo "Run this script from the Rally checkout containing examples/config.toml." >&2
+    echo "Run this script from the Rally directory containing examples/config.toml." >&2
     exit 1
 fi
 root=$(pwd -P)

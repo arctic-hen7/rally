@@ -1,10 +1,121 @@
-name: Release binaries
+name: Release Rally
 on:
   push:
     tags: ['v*']
 permissions:
   contents: read
 jobs:
+  compose:
+    runs-on: ubuntu-24.04
+    outputs:
+      image: ${{ steps.names.outputs.image }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Package the versioned deployment example
+        id: names
+        run: |
+          image="ghcr.io/${GITHUB_REPOSITORY,,}"
+          sh scripts/package-compose.sh "$GITHUB_REF_NAME" "$image"
+          echo "image=$image" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rally-compose
+          path: artifacts/*
+          if-no-files-found: error
+
+  images:
+    needs: compose
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            arch: amd64
+          - runner: ubuntu-24.04-arm
+            arch: arm64
+    runs-on: ${{ matrix.runner }}
+    env:
+      DOCKER_BUILD_RECORD_UPLOAD: 'false'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build worker image
+        id: runtime
+        uses: docker/build-push-action@v6
+        with:
+          context: runtime
+          file: runtime/Containerfile
+          platforms: linux/${{ matrix.arch }}
+          outputs: type=image,name=${{ needs.compose.outputs.image }}-runtime,push-by-digest=true,name-canonical=true,push=true
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ github.ref_name }}
+      - name: Build server image
+        id: server
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Containerfile
+          platforms: linux/${{ matrix.arch }}
+          build-args: |
+            RALLY_RUNTIME_MODE=pull
+            RALLY_RUNTIME_IMAGE=${{ needs.compose.outputs.image }}-runtime:${{ github.ref_name }}
+          outputs: type=image,name=${{ needs.compose.outputs.image }},push-by-digest=true,name-canonical=true,push=true
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ github.ref_name }}
+      - name: Record registry digests
+        env:
+          SERVER_DIGEST: ${{ steps.server.outputs.digest }}
+          RUNTIME_DIGEST: ${{ steps.runtime.outputs.digest }}
+        run: |
+          mkdir digests
+          printf '%s\n' "$SERVER_DIGEST" > digests/server
+          printf '%s\n' "$RUNTIME_DIGEST" > digests/runtime
+      - uses: actions/upload-artifact@v4
+        with:
+          name: digests-${{ matrix.arch }}
+          path: digests/
+          if-no-files-found: error
+
+  image-tags:
+    needs: [compose, images]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: digests-*
+          path: digests
+      - name: Publish multi-architecture release tags
+        env:
+          SERVER_IMAGE: ${{ needs.compose.outputs.image }}
+        run: |
+          for component in runtime server; do
+              image="$SERVER_IMAGE"
+              if [ "$component" = runtime ]; then image="$image-runtime"; fi
+              docker buildx imagetools create --tag "$image:$GITHUB_REF_NAME" \
+                  "$image@$(cat "digests/digests-amd64/$component")" \
+                  "$image@$(cat "digests/digests-arm64/$component")"
+          done
+
   package:
     strategy:
       matrix:
@@ -35,7 +146,7 @@ jobs:
           name: rally-${{ matrix.platform }}
           path: artifacts/*
   publish:
-    needs: package
+    needs: [package, image-tags]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -43,6 +154,7 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           path: artifacts
+          pattern: rally-*
           merge-multiple: true
       - uses: softprops/action-gh-release@v2
         with:

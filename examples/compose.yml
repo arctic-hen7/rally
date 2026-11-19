@@ -1,0 +1,48 @@
+services:
+    server:
+        image: ghcr.io/arctic-hen7/rally:${RALLY_VERSION:?Set RALLY_VERSION to a release tag}
+        entrypoint: ["rally-server", "--codex-config", "/etc/rally/config.toml"]
+        env_file: .env
+        environment:
+            DATABASE_URL: ${DATABASE_URL:-postgres://rally:${RALLY_DB_PASSWORD:?Run sh scripts/setup-compose.sh}@db/rally}
+            RALLY_BIND: 0.0.0.0:8787
+            RALLY_DATA: /var/lib/rally
+            RALLY_PODMAN_URL: unix:///run/rally/podman.sock
+            RALLY_WORKER_URL: http://server:8787
+        ports:
+            - "${RALLY_LISTEN:-127.0.0.1:8787}:8787"
+        volumes:
+            - type: bind
+              source: ${RALLY_CODEX_CONFIG:?Run sh scripts/setup-compose.sh}
+              target: /etc/rally/config.toml
+              read_only: true
+              bind:
+                  create_host_path: false
+            - ${RALLY_HOST_DATA:?Run sh scripts/setup-compose.sh}:/var/lib/rally
+            - ${RALLY_PODMAN_SOCKET:?Run sh scripts/setup-compose.sh}:/run/rally/podman.sock
+        depends_on:
+            db:
+                condition: service_healthy
+        restart: unless-stopped
+        stop_grace_period: 45s
+
+    db:
+        image: docker.io/library/postgres:17-alpine
+        environment:
+            POSTGRES_USER: rally
+            POSTGRES_PASSWORD: ${RALLY_DB_PASSWORD:?Run sh scripts/setup-compose.sh}
+            POSTGRES_DB: rally
+        volumes:
+            - database:/var/lib/postgresql/data
+        healthcheck:
+            test: ["CMD-SHELL", "pg_isready -U rally -d rally"]
+            interval: 3s
+            timeout: 3s
+            retries: 30
+        restart: unless-stopped
+
+networks:
+    default:
+        name: ${RALLY_NETWORK:-rally_default}
+volumes:
+    database:
