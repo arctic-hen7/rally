@@ -55,7 +55,13 @@ impl Wire {
 }
 
 pub async fn summary(app: &App, root: &Path, prompt: &str) -> Result<String> {
-    let model = var("RALLY_WIP_MODEL", "gpt-6-luna");
+    let model: String = sqlx::query_scalar("SELECT wip FROM model_settings")
+        .fetch_one(&app.db)
+        .await?;
+    let home = tempfile::TempDir::new_in(&app.root)?;
+    let lease = app.provider.prepare(app, home.path())?;
+    let mut env = environment()?;
+    env.extend(lease.env.clone());
     let args = [
         "exec",
         "--ephemeral",
@@ -69,8 +75,8 @@ pub async fn summary(app: &App, root: &Path, prompt: &str) -> Result<String> {
     let cmd = engine::command(
         app,
         root,
-        None,
-        &environment()?,
+        Some(home.path()),
+        &env,
         None,
         &var("RALLY_CODEX", "codex"),
         &args,
@@ -158,7 +164,9 @@ async fn drive(app: &App, rid: &str, token: &str, resuming: bool) -> Result<()> 
     if !context.join("skills").is_dir() {
         rally_teams::materialize_skills(&context.join("skills"), &bundle)?;
     }
+    let lease = app.provider.prepare(app, &home)?;
     let mut env = environment()?;
+    env.extend(lease.env.clone());
     env.extend([
         ("RALLY_URL".into(), var("RALLY_WORKER_URL", &app.base)),
         ("RALLY_TOKEN".into(), token.into()),
@@ -322,15 +330,6 @@ async fn conversation(
             "danger-full-access"
         };
         let mut params = json!({"cwd":cwd,"model":model,"developerInstructions":instructions,"approvalPolicy":"never","sandbox":sandbox});
-        if let Some(p) = std::env::var("RALLY_MODEL_PROVIDER")
-            .ok()
-            .filter(|p| !p.is_empty())
-        {
-            params["modelProvider"] = json!(p);
-        }
-        if let Ok(config) = std::env::var("RALLY_CODEX_OVERRIDES") {
-            params["config"] = serde_json::from_str(&config)?;
-        }
         let method = if let Some(native) = native {
             params["threadId"] = json!(native);
             "thread/resume"

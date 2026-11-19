@@ -10,6 +10,7 @@ socket=${RALLY_PODMAN_SOCKET:-${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/podman/podm
 db_password=$(openssl rand -hex 24)
 bootstrap=$(openssl rand -hex 24)
 cat >.env <<EOF
+RALLY_CODEX_CONFIG=$(pwd -P)/examples/config.toml
 RALLY_DB_PASSWORD=$db_password
 RALLY_BOOTSTRAP_SECRET=$bootstrap
 RALLY_HOST_DATA=$(pwd -P)/.rally-data

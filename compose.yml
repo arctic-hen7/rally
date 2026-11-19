@@ -37,8 +37,10 @@ services:
             RALLY_RUNTIME_MOUNTS: ${RALLY_RUNTIME_MOUNTS:-[]}
             RALLY_RUNTIME_ENV: ${RALLY_RUNTIME_ENV:-{}}
             RALLY_ADAPTER: ${RALLY_ADAPTER:-codex}
-            RALLY_WIP_MODEL: ${RALLY_WIP_MODEL:-gpt-6-luna}
-            RALLY_MODEL_PROVIDER: ${RALLY_MODEL_PROVIDER:-}
+            RALLY_CODEX_CONFIG: /etc/rally/config.toml
+            RALLY_BYPASS_AUTH: ${RALLY_BYPASS_AUTH:-false}
+            RALLY_CODEX_AUTH: ${RALLY_CODEX_AUTH:-}
+            RALLY_CODEX_ENV_FILE: ${RALLY_CODEX_ENV_FILE:-}
             RALLY_OIDC_ISSUER: ${RALLY_OIDC_ISSUER:-}
             RALLY_OIDC_CLIENT_ID: ${RALLY_OIDC_CLIENT_ID:-}
             RALLY_OIDC_CLIENT_SECRET: ${RALLY_OIDC_CLIENT_SECRET:-}
@@ -46,6 +48,7 @@ services:
             RALLY_VAPID_PUBLIC: ${RALLY_VAPID_PUBLIC:-}
             RALLY_VAPID_PRIVATE: ${RALLY_VAPID_PRIVATE:-}
         volumes:
+            - ${RALLY_CODEX_CONFIG:?Point RALLY_CODEX_CONFIG at your Codex TOML}:/etc/rally/config.toml:ro
             - ${RALLY_HOST_DATA}:/var/lib/rally
             - ${RALLY_RUNTIME_DIR:-./runtime}:/opt/rally/runtime:ro
             - ${RALLY_PODMAN_SOCKET:?Set the rootless Podman socket path}:/run/rally/podman.sock

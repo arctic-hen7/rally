@@ -108,3 +108,6 @@ ALTER TABLE people ADD COLUMN IF NOT EXISTS push_settings jsonb NOT NULL DEFAULT
 ALTER TABLE messages ADD COLUMN IF NOT EXISTS native_reply jsonb;
 ALTER TABLE runs ADD COLUMN IF NOT EXISTS next_input bigint REFERENCES messages;
 ALTER TABLE skills ADD COLUMN IF NOT EXISTS description text NOT NULL DEFAULT '';
+
+CREATE TABLE IF NOT EXISTS model_settings (singleton boolean PRIMARY KEY DEFAULT true CHECK(singleton), wip text NOT NULL);
+INSERT INTO model_settings(wip) VALUES ('gpt-6-luna') ON CONFLICT DO NOTHING;

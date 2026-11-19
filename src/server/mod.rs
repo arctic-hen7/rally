@@ -4,6 +4,7 @@ mod chat;
 mod engine;
 mod git;
 mod notify;
+pub mod provider;
 mod routines;
 mod runtime;
 mod search;
@@ -26,6 +27,7 @@ use tower_http::services::{ServeDir, ServeFile};
 
 #[derive(Clone)]
 pub struct App {
+    provider: Arc<provider::Provider>,
     db: PgPool,
     http: reqwest::Client,
     root: PathBuf,
@@ -184,6 +186,21 @@ async fn rpc(
 ) -> ApiResult {
     let a = auth::actor(&app, &headers).await?;
     let result = match op.as_str() {
+        "models.settings" => {
+            admin(&a)?;
+            if data.get("model").is_some() {
+                execute(
+                    &app.db,
+                    "UPDATE model_settings SET wip=$1",
+                    &[field(&data, "model")?],
+                )
+                .await?;
+            }
+            let model: String = sqlx::query_scalar("SELECT wip FROM model_settings")
+                .fetch_one(&app.db)
+                .await?;
+            json!({"model":model,"provider":app.provider.status()})
+        }
         "whoami" => {
             json!({"id":a.uid,"name":a.name,"owner":a.owner,"admin":a.admin,"run":a.run,"routine":a.routine})
         }
@@ -235,7 +252,7 @@ async fn live(State(app): State<App>, headers: HeaderMap) -> ApiResult {
         .into_response())
 }
 
-pub async fn serve() -> Result<()> {
+pub async fn serve(provider: Arc<provider::Provider>) -> Result<()> {
     let db = sqlx::postgres::PgPoolOptions::new()
         .max_connections(24)
         .connect(&std::env::var("DATABASE_URL")?)
@@ -263,6 +280,7 @@ pub async fn serve() -> Result<()> {
         .map(|dir| model2vec_rs::model::StaticModel::from_pretrained(dir, None, Some(true), None))
         .transpose()?;
     let app = App {
+        provider,
         db,
         http: reqwest::Client::new(),
         root: root.canonicalize()?,
@@ -281,6 +299,7 @@ pub async fn serve() -> Result<()> {
         .route("/auth/oidc/start", get(auth::oidc_start))
         .route("/auth/oidc/callback", get(auth::oidc_callback))
         .route("/api/{op}", post(rpc))
+        .route("/internal/codex/refresh", post(provider::refresh))
         .route("/events", get(live))
         .route("/hooks/{id}/{secret}", post(routines::webhook))
         .fallback_service(

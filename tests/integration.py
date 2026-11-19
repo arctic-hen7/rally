@@ -77,7 +77,7 @@ class Suite:
 
     def server(self):
         self.process = subprocess.Popen(
-            [BIN / "rally-server"], env=self.env, stdout=self.log, stderr=self.log
+            [BIN / "rally-server","--codex-config", ROOT / "tests/provider.toml","--bypass-auth"], env=self.env, stdout=self.log, stderr=self.log
         )
 
         def ready():

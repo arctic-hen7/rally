@@ -45,6 +45,10 @@ pub async fn build(app: &App) -> Result<()> {
     let cli = std::env::current_exe()?.with_file_name("rally");
     tokio::fs::copy(cli, tools.join("rally.new")).await?;
     tokio::fs::rename(tools.join("rally.new"), tools.join("rally")).await?;
+    build_image().await
+}
+
+pub async fn build_image() -> Result<()> {
     let context = var("RALLY_BUILD_DIR", "runtime");
     let status = engine()
         .args([
