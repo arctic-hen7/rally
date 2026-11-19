@@ -42,10 +42,31 @@ agent = api(
         "instructions": "Reply concisely.",
     },
 )["id"]
+
+
+def set_secret(target, key, value, previous=None):
+    previous = previous or {}
+    return api(
+        "/api/secrets.apply",
+        {
+            "target": target,
+            "changes": {
+                key: {
+                    "value": value,
+                    "base": previous.get("checksum"),
+                    "source": previous.get("source"),
+                }
+            },
+        },
+    )[key]
+
+
+mission_secret = set_secret(mission, "MISSION_SMOKE_TOKEN", "first")
+set_secret(agent, "AGENT_SMOKE_TOKEN", "agent")
 session = None
 for message in [
     "RALLY_WORKSPACE_PROBE: verify a workspace edit.",
-    "Acknowledge this follow-up in the same session.",
+    "RALLY_FOLLOWUP_PROBE: verify the updated mission environment.",
 ]:
     rid = api(
         "/api/post",
@@ -64,7 +85,11 @@ for message in [
                     / mission
                     / "rally-probe.txt"
                 )
-                assert path.read_text() == "verified"
+                assert path.read_text() == (
+                    "verified-second" if session else "verified-first"
+                )
+            if session is None:
+                set_secret(mission, "MISSION_SMOKE_TOKEN", "second", mission_secret)
             session = run["session"]
             break
         time.sleep(0.7)

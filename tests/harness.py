@@ -67,6 +67,9 @@ for line in sys.stdin:
         if method == "thread/resume":
             assert params["threadId"] == native
         send({"id": req, "result": {"thread": {"id": native, "turns": []}}})
+    elif method == "account/login/start":
+        assert params["type"] == "chatgptAuthTokens"
+        send({"id": req, "result": {"type": "chatgptAuthTokens"}})
     elif method == "turn/start":
         text = params["input"][0]["text"]
         turn = "turn-" + os.environ["RALLY_RUN"]
@@ -94,6 +97,14 @@ for line in sys.stdin:
                 '"questionItemId":"ask-colour"' in text and '"answer":"Amber"' in text
             )
             finish("Applied the queued answer.")
+        elif "CHECK_ENV" in text.rsplit("### Addressed by", 1)[-1]:
+            finish(
+                "scope="
+                + ",".join(
+                    os.environ.get(k, "")
+                    for k in ["MISSION_SAMPLE", "ONLY_ROLE", "CALENDAR_TOKEN"]
+                )
+            )
         elif "HOLD" in text.rsplit("### Addressed by", 1)[-1]:
             active = True
             delta("Working. ")
@@ -120,9 +131,28 @@ for line in sys.stdin:
     elif method == "turn/steer":
         send({"id": req, "result": {"turnId": turn}})
         text = params["input"][0]["text"]
+        if "CHECK_ENV" in text:
+            finish(
+                "scope="
+                + ",".join(
+                    os.environ.get(k, "")
+                    for k in ["MISSION_SAMPLE", "ONLY_ROLE", "CALENDAR_TOKEN"]
+                )
+            )
+        if "REFRESH_AUTH" in text:
+            send(
+                {
+                    "id": 800,
+                    "method": "account/chatgptAuthTokens/refresh",
+                    "params": {"reason": "unauthorized"},
+                }
+            )
         if "PROBE" in text:
             delta("Sources=" + ",".join(probe("privatebudgetmarker")) + "; ")
         if "FINISH" in text:
             finish("Completed after steering.")
     elif req == 500 and "result" in item:
         delta("Question answered. ")
+    elif req == 800 and "result" in item:
+        assert item["result"]["accessToken"] == "refreshed-test-access"
+        finish("Refreshed worker credential.")

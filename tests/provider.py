@@ -20,12 +20,14 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def do_POST(self):
         body = json.loads(self.rfile.read(int(self.headers.get("Content-Length", 0))))
         inputs = body.get("input", [])
-        probe = "RALLY_WORKSPACE_PROBE" in json.dumps(inputs)
+        followup = "RALLY_FOLLOWUP_PROBE" in json.dumps(inputs)
+        probe = followup or "RALLY_WORKSPACE_PROBE" in json.dumps(inputs)
+        call_id = "call_rally_followup" if followup else "call_rally_probe"
         outputs = [
             entry
             for entry in inputs
             if entry.get("type") == "function_call_output"
-            and entry.get("call_id") == "call_rally_probe"
+            and entry.get("call_id") == call_id
         ]
         reply = "Rally container runtime verified."
         rid = "resp_" + secrets.token_hex(8)
@@ -39,11 +41,16 @@ class Handler(http.server.BaseHTTPRequestHandler):
         }
         if probe and not outputs:
             args = {
-                "cmd": "printf '%s' 'verified' > rally-probe.txt && cat rally-probe.txt"
+                "cmd": (
+                    'test "$MISSION_SMOKE_TOKEN" = '
+                    + ("second" if followup else "first")
+                    + ' && test "$AGENT_SMOKE_TOKEN" = agent'
+                    + " && printf 'verified-%s' \"$MISSION_SMOKE_TOKEN\" > rally-probe.txt && cat rally-probe.txt"
+                )
             }
             item = {
-                "id": "fc_rally_probe",
-                "call_id": "call_rally_probe",
+                "id": "fc_" + call_id,
+                "call_id": call_id,
                 "type": "function_call",
                 "name": "exec_command",
                 "arguments": json.dumps(args),

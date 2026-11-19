@@ -422,7 +422,8 @@ pub fn main() -> Result<()> {
             }
         } else if let Some(value) = m.get_one::<String>(key) {
             d[key] = if [
-                "private", "invites", "triggers", "repos", "answer", "settings", "payload", "offset", "limit",
+                "private", "invites", "triggers", "repos", "answer", "settings", "payload",
+                "offset", "limit",
             ]
             .contains(&key)
             {

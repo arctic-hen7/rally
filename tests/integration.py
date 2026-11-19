@@ -4,6 +4,7 @@ import base64
 import json
 import http.cookiejar
 from oidc_fixture import Issuer
+import features
 import os
 import pathlib
 import secrets
@@ -64,7 +65,13 @@ class Suite:
             HOME=str(root / "home"),
         )
         self.env.pop("RALLY_TOKEN", None)
-        self.env.pop("RALLY_MODEL_PROVIDER", None)
+        for key in (
+            "RALLY_CODEX_AUTH",
+            "RALLY_CODEX_CONFIG",
+            "RALLY_BYPASS_AUTH",
+            "RALLY_CODEX_ENV_FILE",
+        ):
+            self.env.pop(key, None)
         self.env["GIT_CONFIG_COUNT"] = "1"
         self.env["GIT_CONFIG_KEY_0"] = f"url.{root}/git/.insteadOf"
         self.env["GIT_CONFIG_VALUE_0"] = "https://rally.invalid/"
@@ -75,9 +82,17 @@ class Suite:
         self.token = None
         self.log = open(root / "server.log", "ab")
 
-    def server(self):
+    def server(self, auth_args=None):
         self.process = subprocess.Popen(
-            [BIN / "rally-server","--codex-config", ROOT / "tests/provider.toml","--bypass-auth"], env=self.env, stdout=self.log, stderr=self.log
+            [
+                BIN / "rally-server",
+                "--codex-config",
+                ROOT / "tests/provider.toml",
+                *(["--bypass-auth"] if auth_args is None else auth_args),
+            ],
+            env=self.env,
+            stdout=self.log,
+            stderr=self.log,
         )
 
         def ready():
@@ -663,19 +678,23 @@ class Suite:
         )
 
     def routines(self):
-        hook = self.req("hook.create", {"name":"Release events"})
-        credential = self.req("hook.token", {"hook":hook["id"],"name":"Gitea"})
+        hook = self.req("hook.create", {"name": "Release events"})
+        credential = self.req("hook.token", {"hook": hook["id"], "name": "Gitea"})
         result = self.req(
             "routine.create",
             {
                 "name": "Release Bot",
                 "command": f"rally post --thread {self.mid} --mention {self.agent} --body 'Investigate the release'",
-                "triggers": [{"webhook":hook["id"]}],
+                "triggers": [{"webhook": hook["id"]}],
             },
         )
         assert self.req("routine.list", token=self.bob) == []
         self.req("routine.show", {"routine": result["id"]}, self.bob, denied=True)
-        self.req(urllib.parse.urlsplit(hook["url"]).path, {"event": "review"}, credential["token"])
+        self.req(
+            urllib.parse.urlsplit(hook["url"]).path,
+            {"event": "review"},
+            credential["token"],
+        )
         show = lambda: self.req("routine.show", {"routine": result["id"]})
         wait(
             lambda: show()["jobs"] and show()["jobs"][0]["status"] == "done",
@@ -690,7 +709,11 @@ class Suite:
         )
         timed = self.req(
             "routine.create",
-            {"name": "Heartbeat", "command": "echo heartbeat", "triggers": [{"cron":"*/2 * * * * *","timezone":"Australia/Sydney"}]},
+            {
+                "name": "Heartbeat",
+                "command": "echo heartbeat",
+                "triggers": [{"cron": "*/2 * * * * *", "timezone": "Australia/Sydney"}],
+            },
         )["id"]
         wait(
             lambda: any(
@@ -758,6 +781,9 @@ def main():
                 suite.conversations()
                 suite.git_and_skills()
                 suite.routines()
+                features.secrets_and_access(suite)
+                features.trigger_contract(suite)
+                features.provider_contract(suite, BIN / "rally-server", ROOT)
                 if os.environ.get("RALLY_TEST_BROWSER") == "1":
                     subprocess.run(
                         ["bun", "x", "playwright", "test"],
