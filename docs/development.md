@@ -23,7 +23,7 @@ For local development serve `web/dist` with the server after building the app. T
 
 ## Exercise real worker containers
 
-Use a disposable installation with a separate Compose project, socket owner or dedicated Podman user, data directory, credentials, network, published port and runtime image tag. Run the commands below from the repository root. Supply your disposable configuration as `test.env` and keep it out of version control. The provider override mounts an offline Responses API fixture into a separate container on the test network. It requires no model account.
+Use a disposable installation with a separate Compose project, socket owner or dedicated Podman user, data directory, credentials, network, published port and runtime image tag. Run the commands below from the repository root. Set `RALLY_CODEX_CONFIG` to the absolute path to `tests/provider.toml` for the offline provider. Supply your disposable configuration as `test.env` and keep it out of version control. The provider override mounts an offline Responses API fixture into a separate container on the test network. It requires no model account.
 
 ```sh
 export RALLY_ADAPTER=acp

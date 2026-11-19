@@ -73,3 +73,28 @@ rally hooks status codex
 Ensure the CLI is on the harness's PATH. Review the installed hooks in Codex's `/hooks` UI when prompted. Start the native client beneath a root opened with the same Rally profile. Prompts and replies appear under **External sessions**. Hooks check the registry and marker before recording anything. Capture uses a local outbox with replay protection. Run `rally hooks flush` after restoring connectivity or logging in again. Use `rally hooks uninstall codex` or `claude` to remove the integration.
 
 Opening or syncing a mission installs its Rally skill at the root and links skills under `.agents/skills` and `.claude/skills` in each checkout. This lets a local agent search earlier missions with your CLI identity.
+
+## Synchronise mission secrets
+
+Opening a mission creates a private `.rally.env` at its root, with comments grouping values by source, and a local checksum baseline under `.rally/`. Rally adds ignore entries at that root. Reopening preserves local edits.
+
+```sh
+rally secrets pull --mission dev-12
+# Edit .rally.env
+rally secrets push --mission dev-12
+```
+
+Pull replaces local values and checksums. Push compares individual edited keys against their baseline. It creates new keys on the mission. Editing an inherited key creates a mission override. Deleting a mission override reveals the skill value again. If another editor changed the same key, the batch stops before writing. Save any local changes you want to keep before pulling, or pass `--overwrite KEY` for each deliberate replacement. Values are stored as data, with no shell expansion.
+
+## Manage routines and webhooks
+
+```sh
+rally hook create --name gitea
+rally hook token --hook HOOK_ID --name pull-requests
+rally routine create --name review --command './review.sh' --triggers '[{"webhook":"HOOK_ID"},{"cron":"0 9 * * MON-FRI","timezone":"Australia/Sydney"}]'
+rally hook show --hook HOOK_ID
+rally hook revoke --hook HOOK_ID --token SENDER_ID
+rally routine transfer-preview --routine ROUTINE_ID
+```
+
+Use `rally resource privacy --target ID` to inspect invitations and attachments. Pass `--private true` to restrict new attachments or `--invites '["USER_ID","GROUP_ID"]'` to replace the invite list. Remove a direct mission grant with `rally member remove --mission dev-12 --principal ID`. The response identifies remaining routes of access.

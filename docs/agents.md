@@ -27,7 +27,15 @@ env_key = "TEAM_GATEWAY_TOKEN"
 wire_api = "responses"
 ```
 
-Set `RALLY_MODEL_PROVIDER=team` for the native adapter. Mount this file into both `/session/config.toml:ro` (hosted sessions) and `/root/.codex/config.toml:ro` (standalone commands). Supply the provider's token using the operator's runtime configuration. A preconfigured Codex profile can similarly supply the appropriate authentication file for your provider. Leave the rest of `/session` writable so Rally can resume native conversations. Each role chooses its own model ID. Set `RALLY_WIP_MODEL` for commit summaries if the default `gpt-6-luna` is unavailable. A WIP summary can also be entered manually.
+Select this file with `--codex-config` or `RALLY_CODEX_CONFIG`, enable bypass mode, and put `TEAM_GATEWAY_TOKEN` in the provider dotenv file described in the installation guide. Each role chooses its own model ID. New roles start with `gpt-6.2-sol`. Owners and admins can change the organisation’s WIP summary model in **Settings → Models** or with `rally models settings --model MODEL`. It defaults to `gpt-6-luna`.
+
+Rally starts a container for each hosted invocation, bind-mounts the mission directory and session state, and removes the container when the invocation finishes. Concurrent threads share checkout files. Each new process receives the current secret values. A running process, including one receiving steer messages, keeps its launch environment. A routine runs in its own container and temporary workspace.
+
+## Private resources and scoped secrets
+
+In an agent or skill’s **Access** section, choose **Make private** and invite individual people or groups. The creator and workspace administrators can manage access and secrets. Existing attachments survive a change to private. Inviting a private agent permits everyone in that mission to use it. Confirm the audience in the composer when you invite it. Attaching a private skill to an organisation-wide agent exposes that skill and its capabilities to everyone who can use the agent. The skill’s Access section lists its attachments. A hosted agent still searches with the authority of its dispatcher.
+
+Open **Manage secrets** on a mission, skill or agent to add, reveal, edit or delete environment variables. A mission member can read and edit that mission’s values. A skill contributes its values wherever it is attached. Direct mission or agent definitions override their own attached skills. If two skills on the same target supply the same key, add an explicit override on the target or detach a skill. At launch the agent environment overlays the mission environment. Agent-only secrets stay within that invocation’s container. The server stores encrypted values and checksums of current values. Local workspaces receive the effective mission values through the CLI.
 
 ## Share skills
 
@@ -42,7 +50,9 @@ An active invocation holds its skill snapshot, including across an interruption.
 
 ## Build a routine
 
-Create a routine with a name, shell command, optional UTC cron expression and optional repository list. Choose a working directory relative to the workspace. For example, add a checkout named `automation` on `main`, use `automation` as the working directory and run `./review-event.sh`. Each trigger gets a fresh workspace and a JSON event file at `$RALLY_EVENT`. A five-field cron runs on minute boundaries. The six-field form includes seconds. A webhook accepts a JSON POST at the secret URL returned on creation.
+Create a routine with a name, shell command, optional repositories, and any combination of schedule and webhook triggers. Use the daily or weekdays time picker, select an IANA time zone, or enter a custom cron expression. The form previews the next runs. Choose a working directory relative to the workspace. For example, add a checkout named `automation` on `main`, use `automation` as the working directory and run `./review-event.sh`. Each trigger gets a fresh workspace and a JSON event file at `$RALLY_EVENT`. A five-field cron runs on minute boundaries. The six-field form includes seconds. Under **Routines → Webhooks**, create an endpoint, then generate a named bearer token for each sending service. Copy the token when it is displayed. Add the endpoint as a trigger on one or more of your routines. A sender posts a JSON body to the displayed `/hooks/ID` URL with `Authorization: Bearer TOKEN`. An optional `Idempotency-Key` deduplicates deliveries per sender token. An accepted delivery queues each enabled subscriber once. Revoking a token leaves other senders connected.
+
+Only the webhook owner manages its tokens and subscriptions. When the organisation owner transfers a routine, the transfer preview lists its webhook triggers. Shared endpoints stay with the original owner and disconnect from that routine. An exclusive endpoint can transfer with its existing sender tokens when explicitly selected for handover. Schedule triggers follow the routine.
 
 A script can inspect a PR payload and run a command like this after resolving the mission and agent from its own mapping:
 

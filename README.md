@@ -11,10 +11,12 @@ On Linux with rootless Podman, podman-compose, and OpenSSL installed, run these 
 ```sh
 systemctl --user start podman.socket
 sh scripts/setup-compose.sh
+podman-compose -p rally build server
+podman-compose -p rally run --rm --no-deps server login
 podman-compose -p rally up -d --build
 ```
 
-Open **http://localhost:8787** and create the first owner using the bootstrap secret in `.env`. The initial build downloads the pinned CPU embedding model and installs Codex and its ACP adapter. Configure a model provider before dispatching paid work. Create a topic and a mission to begin.
+Open **http://localhost:8787** and create the first owner using the bootstrap secret in `.env`. The initial build downloads the pinned CPU embedding model and installs Codex and its ACP adapter. The login command uses a device code to connect one Codex account for hosted agents. Custom providers can use the bypass mode described in the installation guide. Create a topic and a mission to begin.
 
 ## Use the CLI
 

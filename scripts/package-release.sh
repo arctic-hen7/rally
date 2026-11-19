@@ -13,7 +13,7 @@ cp target/release/rally "$scratch/$name/bin/"
 cp LICENSE-MIT LICENSE-APACHE README.md "$scratch/$name/"
 if [ "${platform#linux-}" != "$platform" ]; then
     cp target/release/rally-server "$scratch/$name/bin/"
-    cp -R docs runtime scripts "$scratch/$name/"
+    cp -R docs examples runtime scripts "$scratch/$name/"
     mkdir -p "$scratch/$name/web"
     cp -R web/dist "$scratch/$name/web/"
 fi
