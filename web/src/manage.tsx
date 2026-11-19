@@ -52,12 +52,7 @@ export const routineFields = [
     required('command', 'Shell command', 'area'),
     { key: 'directory', label: 'Working directory', placeholder: '.' },
     { key: 'triggers', label: 'Triggers', type: 'triggers' },
-    {
-        key: 'repos',
-        label: 'Workspace repositories (JSON)',
-        type: 'json',
-        placeholder: '[{"name":"scripts","remote":"…","branch":"main"}]',
-    },
+    { key: 'repos', label: 'Workspace repositories', type: 'repositories' },
 ];
 export function Manage({ page, data, edit, act, user, revision, refresh, exit }: any) {
     const [selected, setSelected] = useState(''),
@@ -117,7 +112,6 @@ export function Manage({ page, data, edit, act, user, revision, refresh, exit }:
                 title: 'New routine',
                 op: 'routine.create',
                 fields: routineFields,
-                initial: { repos: '[]' },
                 submit: 'Create routine',
             });
     };
@@ -593,7 +587,6 @@ export function Manage({ page, data, edit, act, user, revision, refresh, exit }:
                                                 initial: {
                                                     ...details,
                                                     routine: selected,
-                                                    repos: JSON.stringify(details.repos, null, 2),
                                                 },
                                                 fields: routineFields,
                                             })

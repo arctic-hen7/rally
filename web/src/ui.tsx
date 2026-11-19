@@ -1,4 +1,4 @@
-import { TriggerEditor } from './triggers';
+import { RepositoryEditor, TriggerEditor } from './triggers';
 import { MarkdownField } from './markdown-editor';
 import React, { useEffect, useRef, useState } from 'react';
 import { ArrowLeft, ArrowUpRight, Check, ChevronDown, Copy, LoaderCircle, X } from 'lucide-react';
@@ -238,6 +238,12 @@ export function Editor({
                             .map((f) =>
                                 f.type === 'triggers' ? (
                                     <TriggerEditor
+                                        key={f.key}
+                                        value={data[f.key] || []}
+                                        change={(v) => setData({ ...data, [f.key]: v })}
+                                    />
+                                ) : f.type === 'repositories' ? (
+                                    <RepositoryEditor
                                         key={f.key}
                                         value={data[f.key] || []}
                                         change={(v) => setData({ ...data, [f.key]: v })}

@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Clock3, Plus, X, Webhook } from 'lucide-react';
+import { Clock3, GitBranch, Plus, X, Webhook } from 'lucide-react';
 import { api, IconButton, required, Section } from './ui';
 
 type Trigger = { cron?: string; timezone?: string; webhook?: string | null };
@@ -95,6 +95,70 @@ function Schedule({ value, change }: { value: Trigger; change: (t: Trigger) => v
         </>
     );
 }
+type Checkout = { name: string; remote: string; branch: string };
+
+export function RepositoryEditor({ value, change }: { value: Checkout[]; change: (v: Checkout[]) => void }) {
+    function update(index: number, field: keyof Checkout, text: string) {
+        change(value.map((repo, i) => (i === index ? { ...repo, [field]: text } : repo)));
+    }
+    return (
+        <section className="trigger-list">
+            <h3>Workspace repositories</h3>
+            {value.map((repo, index) => (
+                <div className="trigger-card" key={index}>
+                    <header>
+                        <GitBranch />
+                        <b>{repo.name || 'New checkout'}</b>
+                        <span className="spacer" />
+                        <IconButton
+                            title="Remove checkout"
+                            onClick={() => change(value.filter((_, i) => i !== index))}
+                        >
+                            <X />
+                        </IconButton>
+                    </header>
+                    <label>
+                        Git remote
+                        <input
+                            required
+                            placeholder="https://git.example.org/team/scripts.git"
+                            value={repo.remote}
+                            onChange={(e) => update(index, 'remote', e.target.value)}
+                        />
+                    </label>
+                    <div className="trigger-grid">
+                        <label>
+                            Checkout directory
+                            <input
+                                required
+                                placeholder="scripts"
+                                value={repo.name}
+                                onChange={(e) => update(index, 'name', e.target.value)}
+                            />
+                        </label>
+                        <label>
+                            Branch
+                            <input
+                                required
+                                value={repo.branch}
+                                onChange={(e) => update(index, 'branch', e.target.value)}
+                            />
+                        </label>
+                    </div>
+                </div>
+            ))}
+            <div className="button-wrap">
+                <button
+                    type="button"
+                    onClick={() => change([...value, { name: '', remote: '', branch: 'main' }])}
+                >
+                    <Plus /> Add repository
+                </button>
+            </div>
+        </section>
+    );
+}
+
 export function TriggerEditor({ value, change }: { value: Trigger[]; change: (v: Trigger[]) => void }) {
     const [hooks, setHooks] = useState<Hook[]>([]);
     const [error, setError] = useState('');

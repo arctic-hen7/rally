@@ -70,7 +70,7 @@ test('desktop mission, messaging, search and thread controls', async ({ page }, 
     await page.getByRole('button', { name: 'New thread', exact: true }).click();
     await page.getByLabel('Thread title').fill('Release notes');
     await page.getByRole('button', { name: 'Create thread' }).click();
-    await expect(page.getByRole('button', { name: 'Release notes', exact: true })).toBeVisible();
+    await expect(page.locator('.thread-bar .tab.active')).toHaveAccessibleName('Release notes');
     expect(errors).toEqual([]);
 });
 test('mobile navigation, mission shell and PWA manifest', async ({ page }, info) => {
@@ -230,4 +230,75 @@ test('workspace settings save a status color and the new agent page supplies its
     await expect(
         page.locator('.setting-line').filter({ hasText: 'Ready to publish' }).locator('.status-dot.rose'),
     ).toBeVisible();
+});
+
+test('webhook senders and the multi-trigger routine editor', async ({ page }, info) => {
+    await page.getByRole('navigation').getByRole('button', { name: 'Routines' }).click();
+    await page.getByRole('button', { name: 'New webhook', exact: true }).click();
+    await page.getByLabel('Webhook name').fill('Pull request updates');
+    await page.getByRole('button', { name: 'Create webhook', exact: true }).click();
+    await page.getByRole('button', { name: 'Pull request updates', exact: true }).click();
+    await page.getByRole('button', { name: 'Generate token' }).click();
+    await page.getByLabel('Sender name').fill('Test service');
+    await page.getByRole('button', { name: 'Save', exact: true }).click();
+    await expect(page.locator('.editor-page code.secret')).toHaveText(/[0-9a-f]{64}/);
+    await page.getByRole('button', { name: 'Back to Routines' }).click();
+    await page.getByRole('button', { name: 'New routine', exact: true }).click();
+    await page.getByLabel('Routine name').fill('Triage updates');
+    await page.getByLabel('Shell command').fill('true');
+    await page.getByRole('button', { name: 'Add repository' }).click();
+    await page.getByLabel('Git remote').fill('https://rally.invalid/team/scripts.git');
+    await page.getByLabel('Checkout directory').fill('scripts');
+    await page.getByRole('button', { name: 'Schedule', exact: true }).click();
+    await page.getByRole('combobox', { name: 'Repeat', exact: true }).selectOption('Weekdays');
+    await page.getByLabel('Time zone').fill('Australia/Sydney');
+    await page.getByRole('button', { name: 'Webhook', exact: true }).click();
+    await page.getByLabel('Endpoint').selectOption({ label: 'Pull request updates' });
+    await expect(page.locator('.editor-page .trigger-card small')).toContainText('MON-FRI');
+    await page.screenshot({ path: info.outputPath('routine-triggers.png') });
+    await page.getByRole('button', { name: 'Create routine', exact: true }).click();
+    await page.getByRole('button', { name: /Triage updates/ }).click();
+    await expect(page.locator('.pane-content')).toContainText('2 triggers');
+});
+
+test('private skills, credential overrides and organisation model settings', async ({ page }) => {
+    await page.getByRole('navigation').getByRole('button', { name: 'Skills' }).click();
+    await page.getByRole('button', { name: 'New skill', exact: true }).click();
+    await page.getByLabel('Skill name').fill('design-library');
+    await page.getByLabel('Description', { exact: true }).fill('Shared design work');
+    await page.getByRole('textbox', { name: 'Instructions' }).fill('Read the team guidance.');
+    await page.getByRole('button', { name: 'Create skill', exact: true }).click();
+    await page.getByRole('button', { name: /design-library/ }).click();
+    await page.getByRole('button', { name: 'Manage secrets' }).click();
+    await page.getByRole('button', { name: 'Add secret' }).click();
+    await page.getByLabel('Environment variable').fill('DESIGN_LIBRARY');
+    await page.getByLabel('Secret value').fill('synthetic-test');
+    await page.getByRole('button', { name: 'Save secret' }).click();
+    await page.getByRole('button', { name: 'Make private', exact: true }).click();
+    await expect(page.getByLabel('Make this skill private')).toBeChecked();
+    await page.getByRole('button', { name: 'Attach to agent or mission' }).click();
+    await page.getByLabel('Agent or mission').selectOption(mission);
+    await page.getByRole('checkbox').check();
+    await page.getByRole('button', { name: 'Save', exact: true }).click();
+    await expect(page.locator('.pane-content')).toContainText(mission);
+    await page.goto('/#mission/' + mission);
+    await page.getByRole('button', { name: 'Mission details', exact: true }).click();
+    await page.getByRole('button', { name: 'Manage secrets' }).click();
+    await expect(page.locator('.secret-row').filter({ hasText: 'DESIGN_LIBRARY' })).toContainText(
+        'design-library',
+    );
+    await page
+        .locator('.secret-row')
+        .filter({ hasText: 'DESIGN_LIBRARY' })
+        .getByRole('button', { name: 'Override' })
+        .click();
+    await page.getByLabel('Secret value').fill('mission-test');
+    await page.getByRole('button', { name: 'Save secret' }).click();
+    await expect(page.locator('.secret-row').filter({ hasText: 'DESIGN_LIBRARY' })).toContainText(
+        'Overrides design-library',
+    );
+    await page.locator('button.profile').click();
+    await page.getByLabel('WIP summary model').fill('test-summary');
+    await page.getByRole('button', { name: 'Save model' }).click();
+    await expect(page.getByRole('status')).toContainText('Saved');
 });
