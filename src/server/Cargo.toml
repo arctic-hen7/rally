@@ -21,7 +21,7 @@ clap = { workspace = true, features = ["derive", "env"] }
 cron = "0.15"
 dotenvy = "0.15"
 futures-util = "0.3"
-jsonwebtoken = { version = "10", default-features = false }
+jsonwebtoken = { version = "10", default-features = false, features = ["rust_crypto"] }
 model2vec-rs = { version = "0.4", default-features = false, features = ["local-only", "fancy-regex"] }
 rand.workspace = true
 reqwest = { workspace = true, features = ["stream"] }
