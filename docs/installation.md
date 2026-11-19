@@ -2,30 +2,41 @@
 
 ## Rootless Podman Compose
 
-Use a dedicated Linux user for Rally with rootless Podman, podman-compose, OpenSSL, and a systemd user session. Clone the repository, start that user's socket, and run:
+Use a dedicated Linux user on AMD64 or ARM64 with rootless Podman, podman-compose, OpenSSL, and a systemd user session. Download `rally-compose.tar.gz` from the release you want. Its `compose.yml` selects the server version, and the server image selects the matching worker. [Rally releases](https://github.com/arctic-hen7/rally/releases)
 
 ```sh
+tar -xzf rally-compose.tar.gz
+cd rally
 systemctl --user enable --now podman.socket
 sh scripts/setup-compose.sh
-podman-compose -p rally build server
 podman-compose -p rally run --rm --no-deps server login
-podman-compose -p rally up -d --build
+podman-compose -p rally up -d
 ```
+
+Sign in with the Codex account shared by your hosted workers. For a custom provider, configure bypass mode below and skip the login command. First startup needs access to GHCR and the PostgreSQL image on Docker Hub. Podman reuses downloaded release images on subsequent starts.
 
 The setup script writes a private `.env` with generated database and bootstrap credentials, the host data path, and the socket location. It copies `examples/config.toml` to `.rally-data/config.toml` for you to edit before login. Open `http://localhost:8787`, create the organisation owner using the bootstrap secret, then invite other local users through Settings. The server runs one instance against its database. Check readiness with `curl --fail http://localhost:8787/health`.
 
 For access from other devices, point your HTTPS reverse proxy at the loopback listener. Set `RALLY_URL` to the public HTTPS origin before starting. Forward the event stream at `/events` with response buffering disabled. HTTPS enables secure cookies, PWA installation and push. The development loopback origin also works for local testing.
 
+## Deployment settings
+
+The deployment Compose file reads the installation's `.env` into the server. Setup supplies the database password, bootstrap secret, mount paths, network name and local URL. Add optional settings there, then run `podman-compose -p rally up -d --force-recreate --no-deps server`. The port, database connection and mount targets are wired in `compose.yml`.
+
 | Setting | Purpose |
 | --- | --- |
 | `RALLY_HOST_DATA` | Absolute data directory as seen by the Podman service. The server sees this directory at `/var/lib/rally`. Both must refer to the same files. |
 | `RALLY_PODMAN_SOCKET` | Dedicated rootless socket mounted into the server. Access to it gives the server control of this user's containers and file mounts. Work containers receive only the configured mounts. |
-| `RALLY_NETWORK` | Network shared by the server and workers. Give each installation its own network, data path, runtime image tag, database and Compose project name. |
-| `RALLY_RUNTIME_DIR` | Operator-maintained build context containing the worker Containerfile. Defaults to `./runtime`. |
-| `DATABASE_URL` | An existing PostgreSQL database. With an external database run `podman-compose -p rally up -d --build --no-deps server`. The database role needs permission to create and update tables in this database. The Compose file still requires its DB password variable for interpolation. |
+| `RALLY_NETWORK` | Network shared by the server and workers. Give each installation its own network, data path, database and Compose project name. Installations on the same host can reuse the published images. |
+| `RALLY_URL` | Public browser and CLI origin, including the scheme. Defaults to `http://localhost:8787`. |
+| `RALLY_RUNTIME_IMAGE` | Optional replacement worker image. The published server supplies its matching release by default. |
+| `RALLY_RUNTIME_MODE`, `RALLY_BUILD_DIR` | Release images use `pull` and fetch missing images. To build at startup, select `build`, mount your build context into the server, set `RALLY_BUILD_DIR` to its container path and choose your own local `RALLY_RUNTIME_IMAGE` tag. |
+| `RALLY_RUNTIME_ENV`, `RALLY_RUNTIME_MOUNTS` | Additional worker environment (JSON object) and Podman bind mounts (JSON array). Mount sources use host paths. |
+| `RALLY_ADAPTER`, `RALLY_WORKERS` | Hosted harness (`codex` or `acp`) and maximum simultaneous agent runs (default 4). |
+| `DATABASE_URL` | An existing PostgreSQL database. With an external database run `podman-compose -p rally up -d --no-deps server`. The database role needs permission to create and update tables in this database. The Compose file still requires its DB password variable for interpolation. |
 | `RALLY_LISTEN` | Host interface and port to publish, default `127.0.0.1:8787`. |
 
-The first start builds the shared runtime image. Public package registries and the pinned embedding model download must be reachable during image builds. Workers need access to Rally and your configured model provider. The server needs HTTPS access to Git remotes. Users configure their forge accounts in Settings under **Git connections**. For a private CA, put its PEM bundle under the host data directory and set `RALLY_GIT_CA_FILE` to its server-visible path, for example `/var/lib/rally/forge-ca.pem`, before starting the server.
+The release server image includes the web app and the pinned embedding model. Workers need access to Rally and your configured model provider. The server needs HTTPS access to Git remotes. Users configure their forge accounts in Settings under **Git connections**. For a private CA, put its PEM bundle under the host data directory and set `RALLY_GIT_CA_FILE` to its server-visible path, for example `/var/lib/rally/forge-ca.pem`, before starting the server.
 
 ## Codex configuration and login
 
@@ -57,8 +68,16 @@ On Linux, unpack the release, put both binaries alongside each other on PATH, an
 
 For a consistent backup, gracefully stop the server, take a PostgreSQL dump including its schema, and copy the entire host data directory. Include `keys/secrets.key` from the data directory. The encrypted secrets in PostgreSQL require this key. Protect the backup, including the shared Codex login, and save operator configuration and worker build context separately. The data directory includes unpushed work and the native session state required to resume work. Restore the database and matching directory together, correct the absolute mount paths, then start Rally. Back up Git remotes separately.
 
-For an upgrade, back up, update the checkout and recreate the server with `podman-compose -p rally up -d --build --force-recreate --no-deps server`. Startup applies the bundled schema and rebuilds the shared runtime. A graceful shutdown sends termination to active workers and records interrupted mission runs for the next startup.
+## Upgrade a Compose installation
 
+Back up the database and data directory as described above. Extract the new release bundle to a temporary directory. Compare the new `compose.yml` with your installed copy, then replace the installed file, carrying across any custom mounts. Keep your installation directory, `.env`, Codex configuration, data and Compose project name. From the installation directory run:
+
+```sh
+podman-compose -p rally pull server
+podman-compose -p rally up -d --no-deps server
+```
+
+Startup applies the bundled schema and obtains the worker image selected by the new server. A graceful shutdown records interrupted mission runs for the next startup.
 
 ### Upgrading repositories to personal connections
 

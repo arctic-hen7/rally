@@ -2,6 +2,18 @@
 
 The server entry point is `src/bin/rally-server.rs`. The API, database schema, Git reconciliation, search, workers and scheduler live in `src/server/`. The CLI uses the same HTTP endpoints from `src/client/`. The client is a React app built by Bun in `web/`.
 
+## Run from a checkout
+
+The root `compose.yml` builds the server from source and mounts `./runtime` to build local worker images. Use it for development and integration tests. The separate `examples/compose.yml` is the deployment template packaged with each release.
+
+```sh
+systemctl --user start podman.socket
+sh scripts/setup-compose.sh
+podman-compose -p rally build server
+podman-compose -p rally run --rm --no-deps server login
+podman-compose -p rally up -d --build
+```
+
 ## Build and run the test suite
 
 Install stable Rust, Bun, Git, OpenSSL, Python 3, a PostgreSQL client and a PostgreSQL instance where the test user may create databases. Linux builds use pkg-config, libssl and libcurl development packages.
@@ -17,7 +29,7 @@ export RALLY_TEST_ADMIN_URL=postgres://postgres@localhost/postgres
 RALLY_TEST_BROWSER=1 python3 tests/integration.py
 ```
 
-Supply the appropriate credentials for your test database. With system Chromium, set `CHROMIUM_PATH` to the executable. Browser screenshots and failed traces are under `web/test-results/`. The integration suite creates a randomly named database and temporary workspace, runs the real binaries, then drops that database. It exercises signed OIDC, local membership, harness messages and recovery, Git divergence, two contributor identities on a disposable HTTPS forge, delegated push and takeover, silent routine dispatch, skill sync and reconnection, external hooks, search and cron/webhook routines. A deterministic protocol peer lets CI test dispatch and steering without provider credentials.
+Supply the appropriate credentials for your test database. The browser runner uses the same environment and cache as the Playwright install command. The server and CLI fixtures use a temporary home. With system Chromium, set `CHROMIUM_PATH` to the executable. Browser screenshots and failed traces are under `web/test-results/`. The integration suite creates a randomly named database and temporary workspace, runs the real binaries, then drops that database. It exercises signed OIDC, local membership, harness messages and recovery, Git divergence, two contributor identities on a disposable HTTPS forge, delegated push and takeover, silent routine dispatch, skill sync and reconnection, external hooks, search and cron/webhook routines. A deterministic protocol peer lets CI test dispatch and steering without provider credentials.
 
 For local development serve `web/dist` with the server after building the app. The server reads `DATABASE_URL`, `RALLY_DATA`, `RALLY_BOOTSTRAP_SECRET` and optionally `RALLY_WEB_DIR`. `RALLY_ENGINE=local` executes commands directly as the server's OS user. Reserve that setting for development fixtures on a trusted machine. The deployment uses rootless Podman.
 
@@ -41,7 +53,13 @@ Set `RALLY_LISTEN=127.0.0.1:18879` in the disposable config for the example port
 
 ## CI and releases
 
-GitHub Actions runs Rust and frontend builds and the PostgreSQL/Chromium integration suite. A pushed `v*` tag builds Linux x86-64 and ARM64 bundles (server, CLI, web app, worker context and docs) and a macOS ARM64 CLI archive. The release workflow uploads archives and SHA-256 manifests to GitHub Releases. To test Linux packaging on a workstation, run:
+GitHub Actions runs Rust and frontend builds and the PostgreSQL/Chromium integration suite. A pushed `v*` tag builds Linux x86-64 and ARM64 bundles (server, CLI, web app, worker context and docs) and a macOS ARM64 CLI archive. On native Linux runners, the workflow builds the server and worker images for both architectures and combines their registry digests into version-tagged GHCR images. GitHub Releases receives the binaries, `rally-compose.tar.gz` and SHA-256 checksums after both image tags are available.
+
+For the first release, push an OCI-compatible tag such as `v0.1.0`. Actions authenticates with its repository token using `packages: write`. After the first publish, open GitHub **Packages → Package settings → Change visibility → Public** for both `rally` and `rally-runtime` so new installations can pull anonymously. Subsequent tags reuse those packages. Use a new tag for each release.
+
+The deployment bundle pins the server image in `examples/compose.yml` to the exact tag. To use the template directly, put it in your installation directory alongside the setup script and example config in their bundled locations, and set `RALLY_VERSION` in `.env`.
+
+To test Linux packaging on a workstation, run:
 
 ```sh
 cargo build --locked --release --bins

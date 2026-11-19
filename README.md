@@ -6,37 +6,33 @@ The Rust server stores mission state in PostgreSQL. The React PWA, Rust CLI, ext
 
 ## Start a server
 
-On Linux with rootless Podman, podman-compose, and OpenSSL installed, prepare the host configuration from the repository root.
+Use a Linux AMD64 or ARM64 host with rootless Podman, podman-compose, OpenSSL and a systemd user session. Download the deployment bundle from [GitHub Releases](https://github.com/arctic-hen7/rally/releases).
 
 ```sh
-systemctl --user start podman.socket
+curl -fLO https://github.com/arctic-hen7/rally/releases/latest/download/rally-compose.tar.gz
+tar -xzf rally-compose.tar.gz
+cd rally
+systemctl --user enable --now podman.socket
 sh scripts/setup-compose.sh
-```
-
-Setup copies the bundled Codex example to `.rally-data/config.toml` and records its absolute host path as `RALLY_CODEX_CONFIG` in `.env`. You can edit that copy or point the setting at your own TOML file. If you already have a Rally `.env`, rerun setup to add the missing setting while keeping your credentials.
-
-For a shared Codex account, build the server, sign in, then start Rally.
-
-```sh
-podman-compose -p rally build server
 podman-compose -p rally run --rm --no-deps server login
-podman-compose -p rally up -d --build
+podman-compose -p rally up -d
 ```
 
-Open **http://localhost:8787** and create the first owner using the bootstrap secret in `.env`. The initial build downloads the pinned CPU embedding model and installs Codex and its ACP adapter. The login command uses a device code to connect one Codex account for hosted agents. Custom providers can use the bypass mode described in the installation guide. Create a topic and a mission to begin.
+Follow the Codex device-login prompt. Open **http://localhost:8787** and use `RALLY_BOOTSTRAP_SECRET` from the generated `.env` to create your owner account. The bundle selects matching server and worker images. Setup creates your editable Codex configuration at `.rally-data/config.toml`.
+
+The deployment template lives in [examples/compose.yml](examples/compose.yml). For a custom model provider, HTTPS access, or updates, see the [installation guide](docs/installation.md). Contributors can build and test unreleased changes with the [source checkout](docs/development.md).
 
 ## Use the CLI
 
+Download the binary archive for your platform from the same release and put `bin/rally` on your PATH.
+
 ```sh
-cargo install --path . --bin rally --locked
 rally login --url http://localhost:8787 --email you@example.org
 rally config set --key directory --value "$HOME/rally"
 eval "$(rally shell-init bash)"
 rally open '#dev-1'
 rally search 'why did we choose this approach?'
 ```
-
-Release archives include the CLI. Linux archives also include the server and compiled web app.
 
 - [Personal Git connections and repository handover](docs/git-connections.md)
 - [Installation, credentials, backups, and upgrades](docs/installation.md)
