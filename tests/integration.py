@@ -6,6 +6,7 @@ import http.cookiejar
 from oidc_fixture import Issuer
 from git_forge import Forge
 import git_connections
+import cli_headers
 import features
 import os
 import pathlib
@@ -787,6 +788,7 @@ class Suite:
 
 
 def main():
+    cli_headers.contract(BIN / "rally")
     admin = os.environ["RALLY_TEST_ADMIN_URL"]
     name = "rally_test_" + secrets.token_hex(7)
     parsed = urllib.parse.urlsplit(admin)

@@ -43,6 +43,8 @@ clap = { workspace = true, features = ["string"] }
 hex = "0.4"
 rand.workspace = true
 reqwest = { workspace = true, features = ["blocking"] }
+rustix = { version = "1", features = ["process"] }
+serde = { version = "1", features = ["derive"] }
 serde_json.workspace = true
 serde_yaml_ng.workspace = true
 sha2.workspace = true

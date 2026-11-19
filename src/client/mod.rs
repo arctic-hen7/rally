@@ -1,3 +1,4 @@
+mod headers;
 mod hooks;
 mod oidc;
 mod secrets;
@@ -8,41 +9,97 @@ use clap::{Arg, ArgAction, Command};
 use rally_teams::{config_dir, field, opt, read_json, write_json};
 use serde_json::{Value, json};
 use std::{
-    io::{self, Read, Write},
+    io::{self, IsTerminal, Read, Write},
     path::{Path, PathBuf},
 };
+
+fn profile_url(config: &Value) -> String {
+    std::env::var("RALLY_URL")
+        .unwrap_or_else(|_| {
+            config["url"]
+                .as_str()
+                .unwrap_or("http://localhost:8787")
+                .to_owned()
+        })
+        .trim_end_matches('/')
+        .to_owned()
+}
 
 pub struct Client {
     pub url: String,
     token: String,
     http: reqwest::blocking::Client,
+    headers: std::cell::RefCell<headers::Headers>,
 }
 impl Client {
-    fn new() -> Result<Self> {
+    fn new(override_url: Option<&str>) -> Result<Self> {
         let c = read_json(&config_dir().join("config.json"))?;
-        let url = std::env::var("RALLY_URL")
-            .unwrap_or_else(|_| c["url"].as_str().unwrap_or("http://localhost:8787").into())
-            .trim_end_matches('/')
-            .to_string();
-        let token = std::env::var("RALLY_TOKEN").unwrap_or_else(|_| opt(&c, "token").to_string());
+        let saved = c["url"].as_str().unwrap_or("http://localhost:8787");
+        let default_url = profile_url(&c);
+        let url = override_url.unwrap_or(&default_url).trim_end_matches('/');
+        let target = url::Url::parse(url).context("Invalid Rally URL")?;
+        anyhow::ensure!(
+            matches!(target.scheme(), "http" | "https")
+                && target.username().is_empty()
+                && target.password().is_none()
+                && target.query().is_none()
+                && target.fragment().is_none(),
+            "Expected an HTTP(S) Rally URL without credentials, query or fragment"
+        );
+        let same_origin =
+            |other: &str| url::Url::parse(other).is_ok_and(|u| u.origin() == target.origin());
+        let token = std::env::var("RALLY_TOKEN")
+            .ok()
+            .filter(|_| same_origin(&default_url))
+            .or_else(|| {
+                c["token"]
+                    .as_str()
+                    .filter(|_| same_origin(saved))
+                    .map(str::to_owned)
+            })
+            .unwrap_or_default();
+        let headers = headers::Headers::load(&c, &target)?;
         Ok(Self {
-            url,
+            url: url.to_owned(),
             token,
+            headers: std::cell::RefCell::new(headers),
             http: reqwest::blocking::Client::builder()
+                .redirect(reqwest::redirect::Policy::custom(|attempt| {
+                    if attempt.previous().len() >= 10 {
+                        attempt.error("Too many Rally redirects")
+                    } else if attempt
+                        .previous()
+                        .first()
+                        .is_some_and(|u| u.origin() == attempt.url().origin())
+                    {
+                        attempt.follow()
+                    } else {
+                        attempt.stop()
+                    }
+                }))
                 .timeout(std::time::Duration::from_secs(180))
                 .build()?,
         })
     }
     pub fn send(&self, path: &str, d: &Value) -> Result<Value> {
-        let r = self
+        let mut request = self
             .http
             .post(format!("{}/{path}", self.url))
-            .bearer_auth(&self.token)
+            .headers(self.headers.borrow_mut().resolve(false)?);
+        if !self.token.is_empty() {
+            request = request.bearer_auth(&self.token);
+        }
+        let r = request
             .json(d)
             .send()
             .with_context(|| format!("Connecting to {}", self.url))?;
         let status = r.status();
-        let body: Value = r.json().context("Invalid server response")?;
+        if status.is_redirection() {
+            bail!(
+                "HTTP {status}: Rally redirected to another origin. Check the server URL and gateway credentials."
+            );
+        }
+        let body: Value = r.json().with_context(|| format!("HTTP {status}: expected a Rally JSON response. Check the server URL and gateway credentials."))?;
         if !status.is_success() {
             bail!("{}", body["error"].as_str().unwrap_or(status.as_str()));
         }
@@ -511,8 +568,30 @@ pub fn main() -> Result<()> {
     if op.starts_with("hooks.") && op != "hooks.flush" {
         return hooks::manage(&op, field(&d, "adapter")?);
     }
-    let client = Client::new()?;
     let as_json = matches.get_flag("json");
+    if op == "shell-init" {
+        println!("{}", workspace::shell(opt(&d, "shell"))?);
+        return Ok(());
+    }
+    if op == "config.set" {
+        let key = field(&d, "key")?;
+        if !["directory", "url"].contains(&key) {
+            bail!("Expected directory or url");
+        }
+        let path = config_dir().join("config.json");
+        let mut c = read_json(&path)?;
+        if key == "url" && c["url"] != d["value"] {
+            c.as_object_mut().unwrap().remove("token");
+        }
+        c[key] = d["value"].clone();
+        write_json(&path, &c)?;
+        return print_result(&json!({"saved": key}), as_json);
+    }
+    let client = Client::new(if op == "login" {
+        d["url"].as_str()
+    } else {
+        None
+    })?;
     let local = || workspace::current(&std::env::current_dir()?, &client.url);
     if d["mission"].is_null()
         && keys.split_whitespace().any(|k| k == "mission")
@@ -531,24 +610,6 @@ pub fn main() -> Result<()> {
     }
     let result = match op.as_str() {
         "secrets.pull" | "secrets.push" => secrets::sync(&client, &op, &d)?,
-        "config.set" => {
-            let key = field(&d, "key")?;
-            if !["directory", "url"].contains(&key) {
-                bail!("Expected directory or url");
-            }
-            let path = config_dir().join("config.json");
-            let mut c = read_json(&path)?;
-            if key == "url" && c["url"] != d["value"] {
-                c.as_object_mut().unwrap().remove("token");
-            }
-            c[key] = d["value"].clone();
-            write_json(&path, &c)?;
-            json!({"saved":key})
-        }
-        "shell-init" => {
-            println!("{}", workspace::shell(opt(&d, "shell"))?);
-            return Ok(());
-        }
         "open" => {
             let dir = workspace::open(&client, field(&d, "mission")?)?;
             if d["print-path"] == true {
@@ -573,8 +634,8 @@ pub fn main() -> Result<()> {
         "login" | "bootstrap" | "register" => {
             let mut c = read_json(&config_dir().join("config.json"))?;
             let mut client = client;
-            if let Some(url) = d["url"].as_str() {
-                client.url = url.trim_end_matches('/').to_string();
+            if op == "login" && io::stdin().is_terminal() {
+                client.headers.borrow_mut().resolve(true)?;
             }
             if d["oidc"] == true {
                 client.token = oidc::login(&client, d["no-browser"] == true)?;
@@ -598,8 +659,10 @@ pub fn main() -> Result<()> {
             client.send("auth/logout", &json!({}))?;
             let p = config_dir().join("config.json");
             let mut c = read_json(&p)?;
-            c.as_object_mut().unwrap().remove("token");
-            write_json(&p, &c)?;
+            if c["token"].as_str() == Some(&client.token) {
+                c.as_object_mut().unwrap().remove("token");
+                write_json(&p, &c)?;
+            }
             json!({"signed_out":true})
         }
         "read" => {
@@ -654,12 +717,7 @@ pub fn main() -> Result<()> {
             client.api(&op, &d)?
         }
     };
-    if as_json {
-        println!("{}", serde_json::to_string(&result)?);
-    } else {
-        print_result(&result)?;
-    }
-    Ok(())
+    print_result(&result, as_json)
 }
 fn secret_input(label: &str) -> Result<String> {
     eprint!("{label}: ");
@@ -677,8 +735,10 @@ fn secret_input(label: &str) -> Result<String> {
     result?;
     Ok(line.trim_end().to_string())
 }
-fn print_result(value: &Value) -> Result<()> {
-    if let Some(rows) = value.as_array() {
+fn print_result(value: &Value, as_json: bool) -> Result<()> {
+    if as_json {
+        println!("{}", serde_json::to_string(value)?);
+    } else if let Some(rows) = value.as_array() {
         for row in rows {
             let key = row["reference"]
                 .as_str()

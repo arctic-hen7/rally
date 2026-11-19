@@ -26,6 +26,33 @@ alias work-rally='RALLY_CONFIG_DIR="$HOME/.config/rally-work" rally'
 alias work-codex='RALLY_CONFIG_DIR="$HOME/.config/rally-work" codex'
 ```
 
+## Connect through an authenticated gateway
+
+Add `http_headers` to the existing CLI profile file, usually `~/.config/rally/config.json` or `$RALLY_CONFIG_DIR/config.json`. Keep the existing profile settings and saved Rally token. Each key is a server origin (scheme, hostname and optional port). For example, this profile obtains an employee credential from a local helper and a second header from the environment.
+
+```json
+{
+  "url": "https://rally.example.org",
+  "http_headers": {
+    "https://rally.example.org": {
+      "X-Employee-Token": {
+        "command": ["gateway-cli", "token", "https://rally.example.org"],
+        "login_command": ["gateway-cli", "login", "https://rally.example.org"]
+      },
+      "X-Gateway-Client": { "env": "COMPANY_GATEWAY_CLIENT" }
+    }
+  }
+}
+```
+
+Choose the header names your gateway accepts. For example, for a gateway accepting `Cf-Access-Jwt-Assertion`, set that header's `command` to `["cloudflared", "access", "token", "--app", "https://rally.example.org"]` and its optional `login_command` to `["cloudflared", "access", "login", "https://rally.example.org"]`. Use the URL of your Rally Access application. Then run `rally login --oidc` and `rally whoami`. The browser uses its own sign-in session. CLI requests, including the OIDC exchange and external-session uploads, use the configured headers alongside Rally authentication.
+
+Commands are executable and argument arrays, run directly from the profile directory. A successful lookup prints one nonempty header value to stdout. The default `timeout_ms` is 15000. Each CLI process reuses its result for `refresh_interval_ms` (default 60000) and refreshes on the next request after that interval. Put either setting alongside `command` in the header definition. An `env` source reads the named environment variable from the CLI process.
+
+Only an explicit `rally login` with a terminal on stdin can invoke `login_command`. If lookup exits unsuccessfully or prints an empty value, Rally runs the browser-login helper with a three-minute deadline and retries lookup once. Login helpers can open a browser and display instructions on stderr. A lookup timeout returns an error immediately. When a background hook fails to authenticate, the capture stays queued. After signing in, run `rally hooks flush` to send it.
+
+Header values stay in process memory. Cross-origin redirects stop before the next request. Git and browser traffic use their own credentials.
+
 ## Find and export conversations
 
 ```sh

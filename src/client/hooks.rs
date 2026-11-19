@@ -70,8 +70,8 @@ pub fn capture(adapter: &str) -> Result<()> {
         Some(p) => Path::new(p),
         None => return Ok(()),
     };
-    let c = Client::new()?;
-    let Some(mid) = workspace::current(cwd, &c.url)? else {
+    let url = profile_url(&read_json(&config_dir().join("config.json"))?);
+    let Some(mid) = workspace::current(cwd, &url)? else {
         return Ok(());
     };
     let event = opt(&d, "hook_event_name");
@@ -107,7 +107,7 @@ pub fn capture(adapter: &str) -> Result<()> {
     } else {
         format!("{adapter} session")
     };
-    let payload = json!({"mission":mid,"source":adapter,"session":session,"title":title,"role":role,"body":text,"key":key,"server":c.url,"commits":workspace::commits(cwd,&c.url,&mid)?});
+    let payload = json!({"mission":mid,"source":adapter,"session":session,"title":title,"role":role,"body":text,"key":key,"server":url,"commits":workspace::commits(cwd,&url,&mid)?});
     write_json(
         &dir.join(format!("{timestamp:032}-{}.json", id("e"))),
         &payload,
