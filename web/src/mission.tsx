@@ -206,10 +206,25 @@ export function Mission({
         selectThread(id);
     };
     const ext = m.threads.filter((x: any) => x.kind === 'external');
-    const conflicts = m.repos.filter((r: any) =>
-        ['diverged', 'local edits', 'unresolved merge', 'error', 'unpublished', 'different branch'].includes(
-            r.status.state,
-        ),
+    const takeOver = (repo: any) =>
+        edit({
+            title: 'Take over ' + repo.name,
+            op: 'repo.takeover',
+            initial: { mission: m.id, name: repo.name, remote: repo.remote },
+            fields: [{ key: 'connection', label: 'Git connection', type: 'git-access' }],
+            submit: 'Use my Git access',
+        });
+    const conflicts = m.repos.filter(
+        (r: any) =>
+            !r.needs_transfer &&
+            [
+                'diverged',
+                'local edits',
+                'unresolved merge',
+                'error',
+                'unpublished',
+                'different branch',
+            ].includes(r.status.state),
     );
     const wip = (r: any, fork = false) =>
         edit({
@@ -500,6 +515,25 @@ export function Mission({
                 </div>
                 {t.thread.kind !== 'external' && (
                     <div className="composer-wrap">
+                        {active
+                            .filter((r: any) => !t.messages.some((msg: any) => msg.id === r.trigger))
+                            .map((r: any) => (
+                                <button key={r.id} onClick={() => setRun(r.id)}>
+                                    <Activity />
+                                    {r.agent_name || r.name || 'Agent'} is working
+                                </button>
+                            ))}
+                        {m.repos
+                            .filter((r: any) => r.needs_transfer)
+                            .map((r: any) => (
+                                <div className="notice warning" key={r.name}>
+                                    <GitBranch />
+                                    <span>
+                                        Hosted Git access paused for <b>{r.name}</b>.
+                                    </span>
+                                    <button onClick={() => takeOver(r)}>Take over</button>
+                                </div>
+                            ))}
                         {conflicts.map((r: any) => (
                             <div className="notice warning" key={r.name}>
                                 <GitBranch />
@@ -652,6 +686,11 @@ export function Mission({
                                                 fields: [
                                                     required('name', 'Checkout directory'),
                                                     required('remote', 'Git remote'),
+                                                    {
+                                                        key: 'connection',
+                                                        label: 'Git connection',
+                                                        type: 'git-access',
+                                                    },
                                                     required('branch', 'Branch'),
                                                 ],
                                             })
@@ -669,7 +708,11 @@ export function Mission({
                                             {r.name}
                                         </strong>
                                         <small>
-                                            {r.recovery || r.branch} · {r.status.state || 'Preparing'}
+                                            {r.recovery || r.branch} ·{' '}
+                                            {r.needs_transfer
+                                                ? 'Needs transfer'
+                                                : r.status.state || 'Preparing'}
+                                            {r.contributor_name && ' · Contributed by ' + r.contributor_name}
                                         </small>
                                         {r.status.error && <p className="error">{r.status.error}</p>}
                                         <div className="button-wrap">
@@ -677,15 +720,28 @@ export function Mission({
                                                 Refresh
                                             </button>
                                             <button onClick={() => wip(r)}>Commit WIP</button>
-                                            <button onClick={() => wip(r, true)}>WIP branch</button>
+                                            <button disabled={r.needs_transfer} onClick={() => wip(r, true)}>
+                                                WIP branch
+                                            </button>
                                             <button
+                                                disabled={r.needs_transfer || !r.connection}
                                                 onClick={() =>
                                                     act('repo.push', { mission: m.id, name: r.name })
                                                 }
                                             >
                                                 Push
                                             </button>
-                                            {r.recovery && (
+                                            <button onClick={() => takeOver(r)}>Take over</button>
+                                            {!r.needs_transfer && me.id === r.contributor && (
+                                                <button
+                                                    onClick={() =>
+                                                        act('repo.withdraw', { mission: m.id, name: r.name })
+                                                    }
+                                                >
+                                                    Withdraw my access
+                                                </button>
+                                            )}
+                                            {r.recovery && !r.needs_transfer && (
                                                 <button
                                                     onClick={() =>
                                                         act('repo.return', { mission: m.id, name: r.name })

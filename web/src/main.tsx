@@ -32,7 +32,20 @@ import {
     Webhook,
     X,
 } from 'lucide-react';
-import { api, Auth, Avatar, Brand, choice, Editor, Form, IconButton, Modal, options, required } from './ui';
+import {
+    api,
+    confirmMembershipChange,
+    Auth,
+    Avatar,
+    Brand,
+    choice,
+    Editor,
+    Form,
+    IconButton,
+    Modal,
+    options,
+    required,
+} from './ui';
 import { MissionNav } from './mission-nav';
 import { Mission } from './mission';
 import { Manage } from './manage';
@@ -226,6 +239,7 @@ function App() {
     const selectThread = (id: string) => nav('thread/' + id);
     const act = async (op: string, d: any) => {
         try {
+            if (!(await confirmMembershipChange(op, d))) return;
             const r = await api(op, d);
             refresh();
             return r;
@@ -254,6 +268,7 @@ function App() {
                     required('topicName', 'Topic name'),
                     required('slug', 'Mission key prefix'),
                     required('title', 'Mission title'),
+                    { key: 'repos', label: 'Repositories', type: 'repositories' },
                 ],
                 initial: { topicName: 'Engineering', slug: 'dev' },
                 submit: 'Create mission',
@@ -266,6 +281,7 @@ function App() {
             op: 'mission.create',
             fields: [
                 required('title', 'Mission title'),
+                { key: 'repos', label: 'Repositories', type: 'repositories' },
                 choice('topic', 'Topic', options(all.topics, 'slug')),
                 { key: 'description', label: 'Description', type: 'area' },
             ],

@@ -1,3 +1,4 @@
+import { GitAccess } from './git-connections';
 import React, { useEffect, useState } from 'react';
 import { Clock3, GitBranch, Plus, X, Webhook } from 'lucide-react';
 import { api, IconButton, required, Section } from './ui';
@@ -95,11 +96,36 @@ function Schedule({ value, change }: { value: Trigger; change: (t: Trigger) => v
         </>
     );
 }
-type Checkout = { name: string; remote: string; branch: string };
+type Checkout = {
+    name: string;
+    remote: string;
+    branch: string;
+    connection?: string;
+    confirm?: boolean;
+    needs_connection?: boolean;
+};
 
-export function RepositoryEditor({ value, change }: { value: Checkout[]; change: (v: Checkout[]) => void }) {
+export function RepositoryEditor({
+    value,
+    change,
+    share,
+}: {
+    share?: boolean;
+    value: Checkout[];
+    change: (v: Checkout[]) => void;
+}) {
     function update(index: number, field: keyof Checkout, text: string) {
-        change(value.map((repo, i) => (i === index ? { ...repo, [field]: text } : repo)));
+        change(
+            value.map((repo, i) =>
+                i === index
+                    ? {
+                          ...repo,
+                          ...(field === 'remote' ? { connection: undefined, confirm: false } : {}),
+                          [field]: text,
+                      }
+                    : repo,
+            ),
+        );
     }
     return (
         <section className="trigger-list">
@@ -126,6 +152,27 @@ export function RepositoryEditor({ value, change }: { value: Checkout[]; change:
                             onChange={(e) => update(index, 'remote', e.target.value)}
                         />
                     </label>
+                    <GitAccess
+                        remote={repo.remote}
+                        connection={repo.connection}
+                        confirmed={repo.confirm}
+                        pending={repo.needs_connection}
+                        share={share}
+                        change={(connection, confirm) =>
+                            change(
+                                value.map((r, i) =>
+                                    i === index
+                                        ? {
+                                              ...r,
+                                              connection: connection || undefined,
+                                              confirm,
+                                              needs_connection: false,
+                                          }
+                                        : r,
+                                ),
+                            )
+                        }
+                    />
                     <div className="trigger-grid">
                         <label>
                             Checkout directory

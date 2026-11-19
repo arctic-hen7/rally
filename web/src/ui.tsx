@@ -1,3 +1,4 @@
+import { GitAccess } from './git-connections';
 import { RepositoryEditor, TriggerEditor } from './triggers';
 import { MarkdownField } from './markdown-editor';
 import React, { useEffect, useRef, useState } from 'react';
@@ -17,6 +18,21 @@ export async function api(op: string, data: Data = {}, auth = false) {
     return result;
 }
 
+export async function confirmMembershipChange(op: string, data: Data) {
+    if (!['member.remove', 'group.remove', 'account.role'].includes(op)) return true;
+    const { affected } = await api(op, { ...data, preview: true });
+    if (!affected.length) return true;
+    if (
+        !window.confirm(
+            'Hosted Git access will pause for these repositories until another member takes over:\n\n' +
+                affected.join('\n') +
+                '\n\nContinue?',
+        )
+    )
+        return false;
+    data.confirm = true;
+    return true;
+}
 export function Brand() {
     return <img className="brand-mark" src="/rally.svg" alt="" />;
 }
@@ -199,6 +215,7 @@ export function Editor({
             for (const f of form.fields) if (f.type === 'json') send[f.key] = JSON.parse(send[f.key] || '[]');
             if (form.fields.some((f) => f.type === 'markdown' && f.required && !send[f.key]?.trim()))
                 throw Error('Write the skill instructions before saving.');
+            if (!(await confirmMembershipChange(form.op!, send))) return;
             if (form.op === 'mission.bootstrap') {
                 const topic = await api('topic.create', { slug: send.slug, name: send.topicName });
                 send.topic = topic.slug;
@@ -244,9 +261,21 @@ export function Editor({
                                     />
                                 ) : f.type === 'repositories' ? (
                                     <RepositoryEditor
+                                        share={form.op?.startsWith('mission.')}
                                         key={f.key}
                                         value={data[f.key] || []}
                                         change={(v) => setData({ ...data, [f.key]: v })}
+                                    />
+                                ) : f.type === 'git-access' ? (
+                                    <GitAccess
+                                        key={f.key}
+                                        remote={data.remote || ''}
+                                        connection={data.connection}
+                                        confirmed={data.confirm}
+                                        share={form.op?.startsWith('repo.')}
+                                        change={(connection, confirm) =>
+                                            setData((old) => ({ ...old, connection, confirm }))
+                                        }
                                     />
                                 ) : f.type === 'checkbox' ? (
                                     <label key={f.key} className="check-field">
@@ -294,7 +323,13 @@ export function Editor({
                                             <select
                                                 value={data[f.key] ?? ''}
                                                 onChange={(e) =>
-                                                    setData({ ...data, [f.key]: e.target.value })
+                                                    setData({
+                                                        ...data,
+                                                        ...(f.key === 'remote'
+                                                            ? { connection: undefined, confirm: false }
+                                                            : {}),
+                                                        [f.key]: e.target.value,
+                                                    })
                                                 }
                                             >
                                                 {f.options.map((o) => (
@@ -310,7 +345,13 @@ export function Editor({
                                                 rows={5}
                                                 value={data[f.key] ?? ''}
                                                 onChange={(e) =>
-                                                    setData({ ...data, [f.key]: e.target.value })
+                                                    setData({
+                                                        ...data,
+                                                        ...(f.key === 'remote'
+                                                            ? { connection: undefined, confirm: false }
+                                                            : {}),
+                                                        [f.key]: e.target.value,
+                                                    })
                                                 }
                                             />
                                         ) : (
@@ -320,7 +361,13 @@ export function Editor({
                                                 placeholder={f.placeholder}
                                                 value={data[f.key] ?? ''}
                                                 onChange={(e) =>
-                                                    setData({ ...data, [f.key]: e.target.value })
+                                                    setData({
+                                                        ...data,
+                                                        ...(f.key === 'remote'
+                                                            ? { connection: undefined, confirm: false }
+                                                            : {}),
+                                                        [f.key]: e.target.value,
+                                                    })
                                                 }
                                             />
                                         )}

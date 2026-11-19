@@ -1,3 +1,4 @@
+import { GitConnections } from './git-connections';
 import { ModelSettings, ResourceAccess } from './access';
 import { Webhooks } from './triggers';
 import React, { useEffect, useState } from 'react';
@@ -152,6 +153,7 @@ export function Manage({ page, data, edit, act, user, revision, refresh, exit }:
         return (
             <div className="page">
                 <h1>Settings</h1>
+                <GitConnections revision={revision} edit={edit} />
                 {(user.owner || user.admin) && <ModelSettings />}
                 <Section title="Account">
                     <div className="setting-row">
@@ -400,6 +402,11 @@ export function Manage({ page, data, edit, act, user, revision, refresh, exit }:
                                         fields: [
                                             required('name', 'Skill name'),
                                             required('remote', 'Git remote'),
+                                            {
+                                                key: 'connection',
+                                                label: 'Git connection',
+                                                type: 'git-access',
+                                            },
                                             { key: 'ref', label: 'Branch or ref' },
                                             { key: 'path', label: 'Skill directory' },
                                             {
@@ -503,11 +510,43 @@ export function Manage({ page, data, edit, act, user, revision, refresh, exit }:
                                     <Body text={details.body} />
                                 </Section>
                                 {details.remote ? (
-                                    <p className="metadata">
+                                    <section className="metadata">
                                         {details.remote}
                                         <br />
-                                        {details.revision?.slice(0, 12)} {details.sync_error}
-                                    </p>
+                                        {details.revision?.slice(0, 12)}
+                                        {details.last_fetch && (
+                                            <p>Last synced {new Date(details.last_fetch).toLocaleString()}</p>
+                                        )}
+                                        {details.sync_error && (
+                                            <p role="status">
+                                                {details.git_paused && 'Sync paused. '}
+                                                {details.sync_error}
+                                            </p>
+                                        )}
+                                        {(details.creator === user.id || user.owner || user.admin) && (
+                                            <button
+                                                onClick={() =>
+                                                    edit({
+                                                        title: 'Reconnect Git skill',
+                                                        op: 'skill.reconnect',
+                                                        initial: {
+                                                            skill: details.id,
+                                                            remote: details.remote,
+                                                        },
+                                                        fields: [
+                                                            {
+                                                                key: 'connection',
+                                                                label: 'Git connection',
+                                                                type: 'git-access',
+                                                            },
+                                                        ],
+                                                    })
+                                                }
+                                            >
+                                                Reconnect Git source
+                                            </button>
+                                        )}
+                                    </section>
                                 ) : (
                                     <button
                                         onClick={() =>
@@ -641,7 +680,9 @@ export function Manage({ page, data, edit, act, user, revision, refresh, exit }:
                                                               ]
                                                             : []),
                                                     ],
-                                                    submit: 'Transfer ownership',
+                                                    submit: details.repos?.some((r: any) => r.connection)
+                                                        ? 'Transfer and pause Git access'
+                                                        : 'Transfer ownership',
                                                 });
                                             } catch (e: any) {
                                                 setError(e.message);
