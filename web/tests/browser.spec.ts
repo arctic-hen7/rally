@@ -111,35 +111,46 @@ test('agent pane streams the run, accepts a queued answer and steers the same in
     await page.screenshot({ path: info.outputPath('agent-pane.png') });
 });
 
-test('installed service worker displays a background agent notification', async ({ page, context }) => {
-    await context.grantPermissions(['notifications']);
-    const origin = new URL(page.url()).origin;
-    const cdp = await context.newCDPSession(page);
-    await page.waitForFunction(() => navigator.serviceWorker.controller?.state === 'activated');
-    const registration = new Promise<string>((resolve) => {
-        cdp.on('ServiceWorker.workerVersionUpdated', ({ versions }) => {
-            const current = versions.find(
-                (v) => v.scriptURL === origin + '/sw.js' && v.status === 'activated',
-            );
-            if (current) resolve(current.registrationId);
+test('installed service worker displays a background agent notification', async ({ playwright, baseURL }) => {
+    // Use a persistent profile and Chromium's notification backend on headless CI
+    const context = await playwright.chromium.launchPersistentContext('', {
+        channel: 'chromium',
+        executablePath: process.env.CHROMIUM_PATH,
+        args: ['--disable-features=NativeNotifications'],
+        permissions: ['notifications'],
+    });
+    try {
+        const origin = new URL(baseURL!).origin;
+        const page = context.pages()[0];
+        await page.goto(origin);
+        const cdp = await context.newCDPSession(page);
+        await page.waitForFunction(() => navigator.serviceWorker.controller?.state === 'activated');
+        const registration = new Promise<string>((resolve) => {
+            cdp.on('ServiceWorker.workerVersionUpdated', ({ versions }) => {
+                const current = versions.find(
+                    (v) => v.scriptURL === origin + '/sw.js' && v.status === 'activated',
+                );
+                if (current) resolve(current.registrationId);
+            });
         });
-    });
-    await cdp.send('ServiceWorker.enable');
-    await cdp.send('ServiceWorker.deliverPushMessage', {
-        origin,
-        registrationId: await registration,
-        data: JSON.stringify({ title: 'Rally', body: 'Your agent has a question', thread: mission }),
-    });
-    await expect
-        .poll(() =>
-            page.evaluate(async () => {
-                const reg = await navigator.serviceWorker.ready;
-                const items = await reg.getNotifications();
-                return items.map((n) => n.body);
-            }),
-        )
-        .toContain('Your agent has a question');
-    await cdp.detach();
+        await cdp.send('ServiceWorker.enable');
+        await cdp.send('ServiceWorker.deliverPushMessage', {
+            origin,
+            registrationId: await registration,
+            data: JSON.stringify({ title: 'Rally', body: 'Your agent has a question', thread: mission }),
+        });
+        await expect
+            .poll(() =>
+                page.evaluate(async () => {
+                    const reg = await navigator.serviceWorker.ready;
+                    const items = await reg.getNotifications();
+                    return items.map((n) => n.body);
+                }),
+            )
+            .toContain('Your agent has a question');
+    } finally {
+        await context.close();
+    }
 });
 
 test('skill authoring page supports browser back, Markdown preview and editing', async ({ page }, info) => {
