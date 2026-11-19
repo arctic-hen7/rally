@@ -816,7 +816,9 @@ def main():
                         ["bun", "x", "playwright", "test"],
                         cwd=ROOT / "web",
                         env=dict(
-                            suite.env,
+                            # Playwright uses the same browser cache as its install command
+                            os.environ,
+                            RALLY_URL=suite.url,
                             RALLY_TEST_EMAIL=EMAIL,
                             RALLY_TEST_PASSWORD=PASSWORD,
                             RALLY_TEST_HARNESS="1",
