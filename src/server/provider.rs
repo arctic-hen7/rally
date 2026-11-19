@@ -17,7 +17,7 @@ struct Options {
     #[arg(long, env = "RALLY_CODEX_CONFIG")]
     codex_config: PathBuf,
     /// Use the given credential file as the installation identity.
-    #[arg(long, env = "RALLY_CODEX_AUTH")]
+    #[arg(long)]
     auth: Option<PathBuf>,
     /// Let the configured provider supply its own authentication.
     #[arg(long, env = "RALLY_BYPASS_AUTH")]
@@ -47,12 +47,15 @@ pub struct Provider {
 }
 pub struct Lease {
     provider: Arc<Provider>,
-    ticket: String,
+    pub ticket: String,
+    pub native_login: Option<Value>,
+    cache: PathBuf,
     pub env: Vec<(String, String)>,
 }
 impl Drop for Lease {
     fn drop(&mut self) {
         self.provider.leases.lock().unwrap().remove(&self.ticket);
+        let _ = fs::remove_file(&self.cache);
     }
 }
 
@@ -137,10 +140,12 @@ pub async fn start() -> Result<()> {
     fs::create_dir_all(&root)?;
     let root = root.canonicalize()?;
     let default = root.join("codex/auth.json");
-    let explicit = options
-        .auth
-        .as_ref()
-        .filter(|path| !path.as_os_str().is_empty());
+    let supplied = options.auth.or_else(|| {
+        std::env::var_os("RALLY_CODEX_AUTH")
+            .filter(|p| !p.is_empty())
+            .map(PathBuf::from)
+    });
+    let explicit = supplied.as_ref();
     let path = explicit.unwrap_or(&default);
     if let Some(Action::Login { action }) = options.action {
         if action.is_some() {
@@ -187,12 +192,13 @@ impl Provider {
     pub fn status(&self) -> Value {
         json!({"mode":if self.source.is_some(){"managed"}else{"provider"},"error":self.error.lock().unwrap().clone()})
     }
-    pub fn prepare(self: &Arc<Self>, app: &App, home: &Path) -> Result<Lease> {
+    pub fn prepare(self: &Arc<Self>, app: &App, home: &Path, native: bool) -> Result<Lease> {
         fs::create_dir_all(home)?;
         write_private(&home.join("config.toml"), self.config.as_bytes())?;
         let cache = home.join("auth.json");
         let ticket = rally_teams::secret();
         let mut env = self.env.clone();
+        let mut native_login = None;
         if let Some(source) = &self.source {
             let mut auth = read_auth(source)?;
             if let Some(tokens) = auth["tokens"].as_object_mut() {
@@ -213,21 +219,44 @@ impl Provider {
                     ),
                 ));
             }
-            write_private(&cache, &serde_json::to_vec(&auth)?)?;
+            if native && auth["tokens"]["account_id"].is_string() {
+                let mut login = native_tokens(&auth["tokens"])?;
+                login["type"] = json!("chatgptAuthTokens");
+                native_login = Some(login);
+                if cache.try_exists()? {
+                    fs::remove_file(&cache)?;
+                }
+            } else {
+                write_private(&cache, &serde_json::to_vec(&auth)?)?;
+            }
         } else if cache.try_exists()? {
-            fs::remove_file(cache)?;
+            fs::remove_file(&cache)?;
         }
         Ok(Lease {
             provider: self.clone(),
             ticket,
+            native_login,
+            cache,
             env,
         })
     }
 }
 
 pub async fn refresh(State(app): State<App>, Json(input): Json<Value>) -> ApiResult {
+    let result = refresh_tokens(&app, field(&input, "refresh_token")?).await?;
+    Ok((
+        [(axum::http::header::CACHE_CONTROL, "no-store")],
+        Json(result),
+    )
+        .into_response())
+}
+pub fn native_tokens(tokens: &Value) -> Result<Value> {
+    Ok(
+        json!({"accessToken":field(tokens,"access_token")?,"chatgptAccountId":field(tokens,"account_id")?}),
+    )
+}
+pub async fn refresh_tokens(app: &App, ticket: &str) -> Result<Value> {
     let provider = &app.provider;
-    let ticket = field(&input, "refresh_token")?;
     let _guard = provider.refresh.lock().await;
     let old = provider
         .leases
@@ -241,7 +270,34 @@ pub async fn refresh(State(app): State<App>, Json(input): Json<Value>) -> ApiRes
     let tokens = &auth["tokens"];
     if old == rally_teams::digest(field(tokens, "access_token")?) {
         let snapshot = auth.clone();
-        let response=app.http.post("https://auth.openai.com/oauth/token").json(&json!({"grant_type":"refresh_token","client_id":field(&input,"client_id")?,"refresh_token":field(tokens,"refresh_token")?})).send().await?;
+        let provenance = &tokens["oauth_provenance"];
+        let issuer = provenance["issuer"]
+            .as_str()
+            .unwrap_or("https://auth.openai.com");
+        let endpoint = url::Url::parse(&format!("{}/oauth/token", issuer.trim_end_matches('/')))?;
+        if endpoint.scheme() != "https"
+            && !(endpoint.scheme() == "http"
+                && matches!(
+                    endpoint.host_str(),
+                    Some("localhost" | "127.0.0.1" | "[::1]")
+                ))
+        {
+            bail!("Invalid credential issuer");
+        }
+        let client_id = provenance["client_id"]
+            .as_str()
+            .unwrap_or("app_EMoamEEZ73f0CkXaXp7hrann");
+        let response = app
+            .http
+            .post(endpoint)
+            .timeout(std::time::Duration::from_secs(30))
+            .json(&json!({
+                "grant_type": "refresh_token",
+                "client_id": client_id,
+                "refresh_token": field(tokens, "refresh_token")?
+            }))
+            .send()
+            .await?;
         if !response.status().is_success() {
             let message = if response.status().is_client_error() {
                 format!(
@@ -252,7 +308,7 @@ pub async fn refresh(State(app): State<App>, Json(input): Json<Value>) -> ApiRes
                 "Codex authentication service is unavailable".into()
             };
             *provider.error.lock().unwrap() = Some(message.clone());
-            return Err(anyhow::anyhow!(message).into());
+            return Err(anyhow::anyhow!(message));
         }
         let update: Value = response.json().await?;
         field(&update, "access_token")?;
@@ -276,5 +332,5 @@ pub async fn refresh(State(app): State<App>, Json(input): Json<Value>) -> ApiRes
         rally_teams::digest(field(&reply, "access_token")?),
     );
     *provider.error.lock().unwrap() = None;
-    Ok(Json(reply).into_response())
+    Ok(reply)
 }

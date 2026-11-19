@@ -293,6 +293,10 @@ pub async fn serve(provider: Arc<provider::Provider>) -> Result<()> {
     let has_secrets: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM scoped_secrets)")
         .fetch_one(&db)
         .await?;
+    provider::write_private(
+        &root.join("codex/runtime-config.toml"),
+        provider.config.as_bytes(),
+    )?;
     let app = App {
         secret_key: Arc::new(secrets::load_key(&root, has_secrets)?),
         provider,

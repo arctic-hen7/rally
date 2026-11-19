@@ -125,6 +125,11 @@ pub fn command(
             &format!("{}:/session:rw", host_path(home)?),
             "--env",
             "CODEX_HOME=/session",
+            "--volume",
+            &format!(
+                "{}:/session/config.toml:ro",
+                host_root.join("codex/runtime-config.toml").display()
+            ),
         ]);
     }
     if let Some((_, rid)) = env.iter().find(|(k, _)| k == "RALLY_RUN") {

@@ -13,6 +13,7 @@ struct Wire {
     input: ChildStdin,
     lines: Lines<BufReader<ChildStdout>>,
     next: i64,
+    auth: Option<(App, String, Value)>,
 }
 impl Wire {
     async fn send(&mut self, data: Value) -> Result<()> {
@@ -30,18 +31,28 @@ impl Wire {
         Ok(id)
     }
     async fn read(&mut self) -> Result<Value> {
-        let s = self
+        let line = self
             .lines
             .next_line()
             .await?
-            .ok_or_else(|| anyhow::anyhow!("Harness disconnected"))?;
-        Ok(serde_json::from_str(&s)?)
+            .context("Harness disconnected")?;
+        Ok(serde_json::from_str(&line)?)
+    }
+    async fn refresh(&mut self, message: &Value) -> Result<()> {
+        let (app, ticket, _) = self.auth.as_ref().context("Unexpected refresh request")?;
+        let tokens = provider::refresh_tokens(app, ticket).await?;
+        let reply = provider::native_tokens(&tokens)?;
+        self.send(json!({"id":message["id"],"result":reply})).await
     }
     async fn call(&mut self, method: &str, params: Value) -> Result<Value> {
         let id = self.request(method, params).await?;
         tokio::time::timeout(Duration::from_secs(75), async {
             loop {
                 let v = self.read().await?;
+                if v["method"] == "account/chatgptAuthTokens/refresh" {
+                    self.refresh(&v).await?;
+                    continue;
+                }
                 if v["id"] == id && v.get("method").is_none() {
                     if let Some(e) = v.get("error") {
                         bail!("Harness {method}: {e}");
@@ -59,7 +70,7 @@ pub async fn summary(app: &App, root: &Path, prompt: &str) -> Result<String> {
         .fetch_one(&app.db)
         .await?;
     let home = tempfile::TempDir::new_in(&app.root)?;
-    let lease = app.provider.prepare(app, home.path())?;
+    let lease = app.provider.prepare(app, home.path(), false)?;
     let mut env = environment()?;
     env.extend(
         super::secrets::environment(
@@ -174,7 +185,8 @@ async fn drive(app: &App, rid: &str, token: &str, resuming: bool) -> Result<()> 
     if !context.join("skills").is_dir() {
         rally_teams::materialize_skills(&context.join("skills"), &bundle)?;
     }
-    let lease = app.provider.prepare(app, &home)?;
+    let acp = var("RALLY_ADAPTER", "codex") == "acp";
+    let lease = app.provider.prepare(app, &home, !acp)?;
     let mut env = environment()?;
     env.extend(super::secrets::environment(app, mid, Some(field(&r, "agent")?)).await?);
     env.extend(lease.env.clone());
@@ -185,7 +197,6 @@ async fn drive(app: &App, rid: &str, token: &str, resuming: bool) -> Result<()> 
         ("RALLY_THREAD".into(), field(&r, "thread")?.into()),
         ("RALLY_RUN".into(), rid.into()),
     ]);
-    let acp = var("RALLY_ADAPTER", "codex") == "acp";
     let program = if acp {
         var("RALLY_ACP", "codex-acp")
     } else {
@@ -218,11 +229,15 @@ async fn drive(app: &App, rid: &str, token: &str, resuming: bool) -> Result<()> 
         input: child.stdin.take().unwrap(),
         lines: BufReader::new(child.stdout.take().unwrap()).lines(),
         next: 0,
+        auth: lease
+            .native_login
+            .clone()
+            .map(|v| (app.clone(), lease.ticket.clone(), v)),
     };
     let mut shutdown = app.shutdown.clone();
     let result = tokio::select! {
-        r=conversation(app,&r,resuming,acp,&mut w,&root,&context)=>r,
-        _=shutdown.changed()=>Ok(())
+        r=conversation(app,&r,resuming,acp,&mut w,&root,&context)=>r.map(Some),
+        _=shutdown.changed()=>Ok(None)
     };
     drop(w);
     if !engine::local() {
@@ -235,13 +250,18 @@ async fn drive(app: &App, rid: &str, token: &str, resuming: bool) -> Result<()> 
         let _ = child.kill().await;
     }
     let tail = error_task.await.unwrap_or_default();
-    result.map_err(|e| {
+    drop(lease);
+    let finished = result.map_err(|e| {
         if tail.is_empty() {
             e
         } else {
             anyhow::anyhow!("{e:#} ({tail})")
         }
-    })
+    })?;
+    if let Some((status, body)) = finished {
+        chat::finish(app, rid, status, &body).await?;
+    }
+    Ok(())
 }
 
 async fn conversation(
@@ -252,7 +272,7 @@ async fn conversation(
     w: &mut Wire,
     root: &Path,
     context: &Path,
-) -> Result<()> {
+) -> Result<(&'static str, String)> {
     let rid = field(r, "id")?;
     let session = field(r, "session")?;
     let mid = field(r, "mission")?;
@@ -335,6 +355,9 @@ async fn conversation(
     } else {
         w.call("initialize",json!({"clientInfo":{"name":"rally","version":env!("CARGO_PKG_VERSION")},"capabilities":{"experimentalApi":true}})).await?;
         w.send(json!({"method":"initialized"})).await?;
+        if let Some((_, _, login)) = &w.auth {
+            w.call("account/login/start", login.clone()).await?;
+        }
         let sandbox = if engine::local() {
             "workspace-write"
         } else {
@@ -360,7 +383,7 @@ async fn conversation(
                 .and_then(|items| items.iter().rev().find(|i| i["type"] == "agentMessage"))
                 .map(|i| opt(i, "text"))
                 .unwrap_or_default();
-            return chat::finish(app, rid, "done", last).await;
+            return Ok(("done", last.to_owned()));
         }
     }
     execute(
@@ -464,6 +487,7 @@ async fn conversation(
                     final_text=partial.clone();break;
                 }
                 match opt(&v,"method"){
+                    "account/chatgptAuthTokens/refresh"=>w.refresh(&v).await?,
                     "item/agentMessage/delta"=>{partial.push_str(opt(p,"delta"));dirty=true;}
                     "item/completed" if p["item"]["type"]=="agentMessage"=>{
                         let item=&p["item"];let text=opt(item,"text");
@@ -490,7 +514,7 @@ async fn conversation(
                     let _=app.events.send(mid.into());dirty=false;
                 }
                 let state:String=sqlx::query_scalar("SELECT status FROM runs WHERE id=$1").bind(rid).fetch_one(&app.db).await?;
-                if state=="stopping"{chat::finish(app,rid,"stopped","").await?;return Ok(());}
+                if state=="stopping"{return Ok(("stopped", String::new()));}
                 for input in sqlx::query("SELECT m.id,m.author,m.body,m.native_reply FROM run_inputs i JOIN messages m ON m.id=i.message WHERE i.run=$1 AND NOT i.sent ORDER BY i.id").bind(rid).fetch_all(&app.db).await?{
                     let id:i64=input.get("id");if steering.values().any(|v|*v==id){continue;}
                     let text=format!("{} steers: {}",input.get::<String,_>("author"),input_text(&input));
@@ -516,18 +540,10 @@ async fn conversation(
     if acp {
         chat::record_work(app, rid, &final_text, &format!("acp:{trigger}")).await?;
     }
-    chat::finish(
-        app,
-        rid,
-        "done",
-        if final_text.is_empty() {
-            partial.trim()
-        } else {
-            &final_text
-        },
-    )
-    .await?;
-    Ok(())
+    if final_text.is_empty() {
+        final_text = partial.trim().to_owned();
+    }
+    Ok(("done", final_text))
 }
 
 fn input_text(message: &sqlx::postgres::PgRow) -> String {
