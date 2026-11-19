@@ -59,7 +59,23 @@ pub async fn call(app: &App, a: &Actor, op: &str, d: &Value) -> Result<Value> {
             .await?;
     if op.starts_with("routine.transfer") {
         admin(a)?;
-        let hooks:Vec<Value>=sqlx::query_scalar("SELECT jsonb_build_object('id',w.id,'name',w.name,'exclusive',(SELECT count(*)=1 FROM routine_triggers WHERE webhook=w.id)) FROM webhooks w JOIN routine_triggers t ON t.webhook=w.id WHERE t.routine=$1 ORDER BY w.id FOR UPDATE OF w").bind(&rid).fetch_all(&mut *tx).await?;
+        // Serialize changes to subscriptions before counting an endpoint's subscribers
+        sqlx::query(
+            "SELECT w.id FROM webhooks w JOIN routine_triggers t ON t.webhook=w.id
+             WHERE t.routine=$1 ORDER BY w.id FOR UPDATE OF w",
+        )
+        .bind(&rid)
+        .execute(&mut *tx)
+        .await?;
+        let hooks: Vec<Value> = sqlx::query_scalar(
+            "SELECT jsonb_build_object('id',w.id,'name',w.name,'exclusive',
+                (SELECT count(*)=1 FROM routine_triggers WHERE webhook=w.id))
+             FROM webhooks w JOIN routine_triggers t ON t.webhook=w.id
+             WHERE t.routine=$1 ORDER BY w.id",
+        )
+        .bind(&rid)
+        .fetch_all(&mut *tx)
+        .await?;
         if op == "routine.transfer-preview" {
             return Ok(json!({"hooks":hooks}));
         }

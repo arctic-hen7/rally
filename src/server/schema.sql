@@ -81,8 +81,8 @@ CREATE TABLE IF NOT EXISTS notifications (
 );
 CREATE TABLE IF NOT EXISTS devices (endpoint text PRIMARY KEY, person text REFERENCES people, subscription jsonb NOT NULL);
 CREATE TABLE IF NOT EXISTS routines (
-    id text PRIMARY KEY, name text NOT NULL, owner_id text REFERENCES people, command text NOT NULL, cron text, hook_hash text UNIQUE NOT NULL,
-    repos jsonb NOT NULL DEFAULT '[]', enabled boolean NOT NULL DEFAULT true, next_at timestamptz
+    id text PRIMARY KEY, name text NOT NULL, owner_id text REFERENCES people, command text NOT NULL,
+    repos jsonb NOT NULL DEFAULT '[]', enabled boolean NOT NULL DEFAULT true
 );
 CREATE TABLE IF NOT EXISTS jobs (
     id text PRIMARY KEY, routine text REFERENCES routines, owner_id text REFERENCES people, payload jsonb NOT NULL, status text NOT NULL,
