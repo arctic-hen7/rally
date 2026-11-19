@@ -6,11 +6,18 @@ The Rust server stores mission state in PostgreSQL. The React PWA, Rust CLI, ext
 
 ## Start a server
 
-On Linux with rootless Podman, podman-compose, and OpenSSL installed, run these commands from this checkout.
+On Linux with rootless Podman, podman-compose, and OpenSSL installed, prepare the host configuration from the repository root.
 
 ```sh
 systemctl --user start podman.socket
 sh scripts/setup-compose.sh
+```
+
+Setup copies the bundled Codex example to `.rally-data/config.toml` and records its absolute host path as `RALLY_CODEX_CONFIG` in `.env`. You can edit that copy or point the setting at your own TOML file. If you already have a Rally `.env`, rerun setup to add the missing setting while keeping your credentials.
+
+For a shared Codex account, build the server, sign in, then start Rally.
+
+```sh
 podman-compose -p rally build server
 podman-compose -p rally run --rm --no-deps server login
 podman-compose -p rally up -d --build

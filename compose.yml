@@ -13,6 +13,7 @@ services:
             timeout: 3s
             retries: 30
     server:
+        entrypoint: ["rally-server", "--codex-config", "/etc/rally/config.toml"]
         build:
             context: .
             dockerfile: Containerfile
@@ -37,7 +38,6 @@ services:
             RALLY_RUNTIME_MOUNTS: ${RALLY_RUNTIME_MOUNTS:-[]}
             RALLY_RUNTIME_ENV: ${RALLY_RUNTIME_ENV:-{}}
             RALLY_ADAPTER: ${RALLY_ADAPTER:-codex}
-            RALLY_CODEX_CONFIG: /etc/rally/config.toml
             RALLY_BYPASS_AUTH: ${RALLY_BYPASS_AUTH:-false}
             RALLY_CODEX_AUTH: ${RALLY_CODEX_AUTH:-}
             RALLY_CODEX_ENV_FILE: ${RALLY_CODEX_ENV_FILE:-}
@@ -48,7 +48,12 @@ services:
             RALLY_VAPID_PUBLIC: ${RALLY_VAPID_PUBLIC:-}
             RALLY_VAPID_PRIVATE: ${RALLY_VAPID_PRIVATE:-}
         volumes:
-            - ${RALLY_CODEX_CONFIG:?Point RALLY_CODEX_CONFIG at your Codex TOML}:/etc/rally/config.toml:ro
+            - type: bind
+              source: ${RALLY_CODEX_CONFIG:?Run sh scripts/setup-compose.sh or set RALLY_CODEX_CONFIG to an existing host TOML file}
+              target: /etc/rally/config.toml
+              read_only: true
+              bind:
+                  create_host_path: false
             - ${RALLY_HOST_DATA}:/var/lib/rally
             - ${RALLY_RUNTIME_DIR:-./runtime}:/opt/rally/runtime:ro
             - ${RALLY_PODMAN_SOCKET:?Set the rootless Podman socket path}:/run/rally/podman.sock

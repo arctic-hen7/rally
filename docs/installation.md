@@ -12,7 +12,7 @@ podman-compose -p rally run --rm --no-deps server login
 podman-compose -p rally up -d --build
 ```
 
-The setup script writes a private `.env` with generated database and bootstrap credentials. It also records the absolute host data path and socket location. Open `http://localhost:8787`, create the organisation owner using the bootstrap secret, then invite other local users through Settings. The server runs one instance against its database. Check readiness with `curl --fail http://localhost:8787/health`.
+The setup script writes a private `.env` with generated database and bootstrap credentials, the host data path, and the socket location. It copies `examples/config.toml` to `.rally-data/config.toml` for you to edit before login. Open `http://localhost:8787`, create the organisation owner using the bootstrap secret, then invite other local users through Settings. The server runs one instance against its database. Check readiness with `curl --fail http://localhost:8787/health`.
 
 For access from other devices, point your HTTPS reverse proxy at the loopback listener. Set `RALLY_URL` to the public HTTPS origin before starting. Forward the event stream at `/events` with response buffering disabled. HTTPS enables secure cookies, PWA installation and push. The development loopback origin also works for local testing.
 
@@ -29,7 +29,9 @@ The first start builds the shared runtime image. Public package registries and t
 
 ## Codex configuration and login
 
-Every installation supplies a Codex TOML path. With the server binary use `--codex-config /path/to/config.toml`. In Compose set `RALLY_CODEX_CONFIG` in `.env` to the absolute host path. The setup script selects the supplied example, `examples/config.toml`. Edit it or select another file and recreate the server to apply changes. Existing checkouts with an older `.env` can add this setting by hand.
+Every installation supplies a Codex TOML path. With the server binary use `--codex-config /path/to/config.toml`. With Compose, `RALLY_CODEX_CONFIG` in `.env` selects a readable file on the **host**. Compose mounts that file read-only at `/etc/rally/config.toml` inside the server container for both login and startup. Recreate the server after editing or selecting a different file.
+
+If an older checkout reports `statfs /etc/rally/config.toml: no such file or directory`, run `sh scripts/setup-compose.sh` from the repository root. For an existing `.env` missing the key, setup adds the absolute path to `.rally-data/config.toml` and preserves the other settings. If the key is already present, check its value directly in `.env` and select an existing host file. A required-variable check detects an empty or missing setting. Podman checks the filesystem when mounting the selected file.
 
 Choose one provider identity for the installation.
 
