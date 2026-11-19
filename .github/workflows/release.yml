@@ -124,7 +124,9 @@ jobs:
           for component in runtime server; do
               image="$SERVER_IMAGE"
               if [ "$component" = runtime ]; then image="$image-runtime"; fi
-              docker buildx imagetools create --tag "$image:$GITHUB_REF_NAME" \
+              tags=(--tag "$image:$GITHUB_REF_NAME")
+              if [[ "$GITHUB_REF_NAME" != *-* ]]; then tags+=(--tag "$image:latest"); fi
+              docker buildx imagetools create "${tags[@]}" \
                   "$image@$(cat "digests/digests-amd64/$component")" \
                   "$image@$(cat "digests/digests-arm64/$component")"
           done
