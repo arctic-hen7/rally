@@ -48,6 +48,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     + " && printf 'verified-%s' \"$MISSION_SMOKE_TOKEN\" > rally-probe.txt && cat rally-probe.txt"
                 )
             }
+            if "RALLY_GIT_PROBE" in json.dumps(inputs):
+                args["cmd"] = (
+                    "git -C project fetch origin && git -C project push origin HEAD:refs/heads/hosted-smoke && "
+                    + args["cmd"]
+                )
             item = {
                 "id": "fc_" + call_id,
                 "call_id": call_id,

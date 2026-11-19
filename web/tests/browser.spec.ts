@@ -302,3 +302,34 @@ test('private skills, credential overrides and organisation model settings', asy
     await page.getByRole('button', { name: 'Save model' }).click();
     await expect(page.getByRole('status')).toContainText('Saved');
 });
+
+test('delegate a personal Git connection to a repository and withdraw it', async ({ page }, info) => {
+    const origin = process.env.RALLY_TEST_GIT_ORIGIN;
+    test.skip(!origin, 'Requires the disposable HTTPS forge');
+    const name = 'Browser Git account';
+    await page.goto('/#Settings');
+    await page.getByRole('button', { name: 'New connection' }).click();
+    await page.getByLabel('Connection name').fill(name);
+    await page.getByLabel('HTTPS forge host').fill(origin!);
+    await page.getByLabel('Git username').fill('alice');
+    await page.getByLabel('Access token').fill('alice-fixture');
+    await page.getByRole('button', { name: 'Save connection' }).click();
+    await expect(page.getByRole('button', { name: new RegExp(name) })).toBeVisible();
+    await page.goto('/#mission/' + mission);
+    await page.getByRole('button', { name: 'Mission details', exact: true }).click();
+    await page.getByRole('button', { name: 'Add repository' }).click();
+    await page.getByLabel('Checkout directory').fill('browser');
+    await page.getByLabel('Git remote').fill(origin + '/project.git');
+    await page.getByLabel('Git connection').selectOption({ label: name + ' · alice' });
+    await page.getByRole('checkbox', { name: /Allow current and future/ }).check();
+    await page.getByRole('button', { name: 'Save', exact: true }).click();
+    await expect(page.getByText(/Contributed by Morgan Lee/)).toBeVisible();
+    await page.getByRole('button', { name: 'Withdraw my access' }).click();
+    await expect(page.getByText('Hosted Git access paused for')).toBeVisible();
+    await page.screenshot({ path: info.outputPath('git-transfer.png') });
+    await page.getByRole('button', { name: 'Take over', exact: true }).first().click();
+    await page.getByLabel('Git connection').selectOption({ label: name + ' · alice' });
+    await page.getByRole('checkbox', { name: /Allow current and future/ }).check();
+    await page.getByRole('button', { name: 'Use my Git access' }).click();
+    await expect(page.getByRole('button', { name: 'Withdraw my access' })).toBeVisible();
+});

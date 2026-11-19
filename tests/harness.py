@@ -4,6 +4,7 @@
 import json
 import os
 import pathlib
+import subprocess
 import sys
 import urllib.request
 
@@ -97,6 +98,19 @@ for line in sys.stdin:
                 '"questionItemId":"ask-colour"' in text and '"answer":"Amber"' in text
             )
             finish("Applied the queued answer.")
+        elif "GIT_MISSION_PROBE" in text.rsplit("### Addressed by", 1)[-1]:
+            subprocess.run(
+                [
+                    "git",
+                    "-C",
+                    "project",
+                    "push",
+                    "origin",
+                    "HEAD:refs/heads/mission-probe",
+                ],
+                check=True,
+            )
+            finish("Mission Git access verified.")
         elif "CHECK_ENV" in text.rsplit("### Addressed by", 1)[-1]:
             finish(
                 "scope="

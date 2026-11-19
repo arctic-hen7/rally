@@ -4,6 +4,8 @@ import base64
 import json
 import http.cookiejar
 from oidc_fixture import Issuer
+from git_forge import Forge
+import git_connections
 import features
 import os
 import pathlib
@@ -72,10 +74,12 @@ class Suite:
             "RALLY_CODEX_ENV_FILE",
         ):
             self.env.pop(key, None)
+        self.forge = Forge(root)
+        self.env["RALLY_GIT_CA_FILE"] = str(self.forge.ca)
         self.env["GIT_CONFIG_COUNT"] = "1"
         self.env["GIT_CONFIG_KEY_0"] = f"url.{root}/git/.insteadOf"
-        self.env["GIT_CONFIG_VALUE_0"] = "https://rally.invalid/"
-        self.env["GIT_ALLOW_PROTOCOL"] = "file:https:ssh"
+        self.env["GIT_CONFIG_VALUE_0"] = self.forge.origin + "/"
+        self.env["GIT_ALLOW_PROTOCOL"] = "file:https:http:ssh"
         self.issuer = Issuer(root)
         self.env.update(RALLY_OIDC_ISSUER=self.issuer.url, RALLY_OIDC_CLIENT_ID="rally")
         self.process = None
@@ -533,8 +537,24 @@ class Suite:
         self.git(dev, "add", ".")
         self.git(dev, "commit", "--no-gpg-sign", "-m", "Initial")
         self.git(dev, "push", "-u", "origin", "main")
-        url = "https://rally.invalid/project.git"
-        repo = {"mission": self.mid, "name": "project", "remote": url, "branch": "main"}
+        url = self.forge.origin + "/project.git"
+        self.git_connection = self.req(
+            "connection.create",
+            {
+                "name": "Forge",
+                "username": "alice",
+                "host": self.forge.origin,
+                "token": "alice-fixture",
+            },
+        )["id"]
+        repo = {
+            "mission": self.mid,
+            "name": "project",
+            "remote": url,
+            "branch": "main",
+            "connection": self.git_connection,
+            "confirm": True,
+        }
         assert self.req("repo.add", repo)[0]["status"]["state"] == "current"
         hosted = self.root / "data/missions" / self.mid / "project"
         (dev / "upstream").write_text("upstream")
@@ -571,7 +591,13 @@ class Suite:
         assert returned["recovery"] is None and returned["status"]["state"] == "current"
         assert self.git(dev, "ls-remote", "--heads", "origin", recovery)
         sk = self.req(
-            "skill.import", {"name": "reviewer", "remote": url, "ref": "main"}
+            "skill.import",
+            {
+                "name": "reviewer",
+                "remote": url,
+                "ref": "main",
+                "connection": self.git_connection,
+            },
         )["id"]
         self.req("skill.attach", {"skill": sk, "target": self.mid})
         (dev / "SKILL.md").write_text(
@@ -781,6 +807,7 @@ def main():
                 suite.conversations()
                 suite.git_and_skills()
                 suite.routines()
+                git_connections.contract(suite, wait)
                 features.secrets_and_access(suite)
                 features.trigger_contract(suite)
                 features.provider_contract(suite, BIN / "rally-server", ROOT)
@@ -793,6 +820,7 @@ def main():
                             RALLY_TEST_EMAIL=EMAIL,
                             RALLY_TEST_PASSWORD=PASSWORD,
                             RALLY_TEST_HARNESS="1",
+                            RALLY_TEST_GIT_ORIGIN=suite.forge.origin,
                         ),
                         check=True,
                     )
@@ -802,6 +830,7 @@ def main():
             finally:
                 suite.stop()
                 suite.issuer.close()
+                suite.forge.close()
                 suite.log.close()
     finally:
         subprocess.run(

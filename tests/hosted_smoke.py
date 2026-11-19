@@ -34,6 +34,30 @@ topic = api(
 mission = api(
     "/api/mission.create", {"topic": topic, "title": "Verify native runtime continuity"}
 )["id"]
+git_origin = os.environ.get("RALLY_TEST_GIT_ORIGIN")
+if git_origin:
+    connection = api(
+        "/api/connection.create",
+        {
+            "name": "Smoke forge " + suffix,
+            "host": git_origin,
+            "username": "alice",
+            "token": "alice-fixture",
+        },
+    )
+    attached = api(
+        "/api/repo.add",
+        {
+            "mission": mission,
+            "name": "project",
+            "branch": "main",
+            "remote": git_origin + "/project.git",
+            "connection": connection["id"],
+            "confirm": True,
+        },
+    )
+    assert attached[0]["status"]["state"] == "current", attached[0]["status"]
+
 agent = api(
     "/api/agent.create",
     {
@@ -70,7 +94,13 @@ for message in [
 ]:
     rid = api(
         "/api/post",
-        {"thread": mission, "body": message, "mentions": [agent], "confirm": True},
+        {
+            "thread": mission,
+            "body": message + (" RALLY_GIT_PROBE" if git_origin else ""),
+            "mentions": [agent],
+            "confirm": True,
+            "silent": True,
+        },
     )["runs"][0]
     for _ in range(100):
         run = api("/api/run.show", {"run": rid})
@@ -95,6 +125,10 @@ for message in [
         time.sleep(0.7)
     else:
         raise AssertionError("Hosted turn timed out")
+assert all(
+    "RALLY_WORKSPACE_PROBE" not in m["body"]
+    for m in api("/api/read", {"thread": mission})["messages"]
+)
 print(
     "Passed: real container harness performs two turns through the offline provider in one session"
 )
