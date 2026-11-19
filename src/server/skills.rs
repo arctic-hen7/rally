@@ -211,7 +211,7 @@ pub async fn call(app: &App, a: &Actor, op: &str, d: &Value) -> Result<Value> {
             let cid=if op=="skill.import"{
                 let url=field(d,"remote")?;
                 let cid=connections::selected(app,a,url,d["connection"].as_str().filter(|s|!s.is_empty())).await?;
-                connections::validate(app,&a.uid,url,cid.as_deref()).await?;
+                connections::validate(&app.db,&a.uid,url,cid.as_deref()).await?;
                 cid
             }else{field(d,"body")?;field(d,"description")?;if d.get("remote").is_some(){bail!("Use skill import for a Git source");}None};
             let _guard=if op=="skill.import"{Some(app.skill_lock.lock().await)}else{None};
@@ -234,7 +234,7 @@ pub async fn call(app: &App, a: &Actor, op: &str, d: &Value) -> Result<Value> {
             let remote=field(&s,"remote")?;
             let choice=connections::selected(app,a,remote,cid).await?;
             let cid=choice.as_deref();
-            connections::validate(app,&a.uid,remote,cid).await?;
+            connections::validate(&app.db,&a.uid,remote,cid).await?;
             load(app,sid,Some((&a.uid,cid))).await?;
             Ok(json!({"id":sid}))
         }

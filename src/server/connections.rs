@@ -33,8 +33,8 @@ pub fn client() -> Result<reqwest::Client> {
     Ok(builder.build()?)
 }
 
-pub async fn validate(
-    app: &App,
+pub async fn validate<'e>(
+    db: impl sqlx::PgExecutor<'e>,
     owner: &str,
     remote: &str,
     connection: Option<&str>,
@@ -44,9 +44,10 @@ pub async fn validate(
         bail!("Enter a repository URL including its path");
     }
     if let Some(cid) = connection {
-        let ok:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM git_connections WHERE id=$1 AND owner_id=$2 AND origin=$3)")
-            .bind(cid).bind(owner).bind(host).fetch_one(&app.db).await?;
-        if !ok {
+        let selected = sqlx::query_scalar::<_,String>(
+            "SELECT id FROM git_connections WHERE id=$1 AND owner_id=$2 AND origin=$3 FOR KEY SHARE",
+        ).bind(cid).bind(owner).bind(host).fetch_optional(db).await?;
+        if selected.is_none() {
             bail!("Choose one of your Git connections for this HTTPS host");
         }
     }
@@ -141,7 +142,7 @@ pub async fn probe(
     connection: Option<&str>,
     reference: &str,
 ) -> Result<()> {
-    validate(app, owner, remote, connection).await?;
+    validate(&app.db, owner, remote, connection).await?;
     let lease = source(app, remote, owner, connection);
     let mut cmd = tokio::process::Command::new("git");
     cmd.current_dir(&app.root).envs(lease.env()).args([
