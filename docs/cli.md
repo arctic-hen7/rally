@@ -1,6 +1,8 @@
 # Rally CLI
 
-Use `rally --help` and `rally <command> --help` for flags. Add `--json` for stable machine-readable output. Install the release binary on your PATH or run `cargo install --path . --locked --bin rally`.
+The `rally` command connects your local Git workspaces, agent sessions and scripts to a self-hosted Rally server. Install the release candidate on Linux or macOS with `cargo install rally-cli --locked --version '=0.1.0-rc.1'`. You can also download a prebuilt binary from GitHub Releases or build from a checkout with `cargo install --path . --locked`.
+
+Use `rally --help` and `rally <command> --help` for flags. Add `--json` for machine-readable output.
 
 ## Sign in and open a mission
 
@@ -64,7 +66,7 @@ Use `--mention` and `--link` to send structured references from scripts. The fir
 | `routine create/update/show/list/trigger/enable/disable/transfer` | Run and maintain cron and webhook scripts. |
 | `run show/follow/steer/answer/stop` | Watch and interact with hosted work. `--answer` accepts a JSON object keyed by question ID. |
 
-Use Settings or `rally connection create` to register personal HTTPS Git accounts. [Git connections and delegation](git-connections.md)
+Use Settings or `rally connection create` to register personal HTTPS Git accounts. [Git connections and delegation](https://github.com/arctic-hen7/rally/blob/main/docs/git-connections.md)
 
 ## Capture local sessions
 

@@ -1,0 +1,39 @@
+[package]
+name = "rally-server"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[[bin]]
+name = "rally-server"
+path = "main.rs"
+
+[dependencies]
+rally-cli = { path = "../.." }
+anyhow.workspace = true
+argon2 = "0.5"
+axum = "0.8"
+base64.workspace = true
+chrono = { version = "0.4", features = ["serde"] }
+chrono-tz = "0.10"
+clap = { workspace = true, features = ["derive", "env"] }
+cron = "0.15"
+dotenvy = "0.15"
+futures-util = "0.3"
+jsonwebtoken = { version = "9", default-features = false }
+model2vec-rs = { version = "0.4", default-features = false, features = ["local-only", "fancy-regex"] }
+rand.workspace = true
+reqwest = { workspace = true, features = ["stream"] }
+ring = "0.17"
+serde_json.workspace = true
+serde_yaml_ng.workspace = true
+sha2.workspace = true
+sqlx = { version = "0.8", default-features = false, features = ["postgres", "runtime-tokio-rustls", "chrono", "json"] }
+tempfile.workspace = true
+tokio = { version = "1", features = ["full"] }
+tokio-stream = { version = "0.1", features = ["sync"] }
+toml = "0.8"
+tower-http = { version = "0.6", features = ["fs", "limit"] }
+url.workspace = true
+web-push = { version = "0.11", default-features = false, features = ["isahc-client"] }

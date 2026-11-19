@@ -1,6 +1,6 @@
 # Develop and verify Rally
 
-The server entry point is `src/bin/rally-server.rs`. The API, database schema, Git reconciliation, search, workers and scheduler live in `src/server/`. The CLI uses the same HTTP endpoints from `src/client/`. The client is a React app built by Bun in `web/`.
+The Cargo workspace builds the `rally-cli` package at the repository root and the private `rally-server` package in `src/server/`. The server entry point is `src/server/main.rs`. Its API, schema, Git reconciliation, workers and scheduler live alongside it. The CLI uses the same HTTP endpoints from `src/client/`. The web client is a React app built by Bun in `web/`.
 
 ## Run from a checkout
 
@@ -55,7 +55,27 @@ Set `RALLY_LISTEN=127.0.0.1:18879` in the disposable config for the example port
 
 GitHub Actions runs Rust and frontend builds and the PostgreSQL/Chromium integration suite. A pushed `v*` tag builds Linux x86-64 and ARM64 bundles (server, CLI, web app, worker context and docs) and a macOS ARM64 CLI archive. On native Linux runners, the workflow builds the server and worker images for both architectures and combines their registry digests into version-tagged GHCR images. GitHub Releases receives the binaries, `rally-compose.tar.gz` and SHA-256 checksums after both image tags are available.
 
-For the first release, push an OCI-compatible tag such as `v0.1.0`. Actions authenticates with its repository token using `packages: write`. After the first publish, open GitHub **Packages → Package settings → Change visibility → Public** for both `rally` and `rally-runtime` so new installations can pull anonymously. Subsequent tags reuse those packages. Use a new tag for each release.
+### Cut the first release candidate
+
+1. Sign in to crates.io, verify your email, and create an API token with permission to publish the new `rally-cli` crate. For subsequent versions the workflow needs permission to publish updates to that crate. Save the token as a GitHub Actions repository secret by running `gh secret set CARGO_REGISTRY_TOKEN` from this checkout and pasting it at the prompt.
+2. On `main`, check that `[workspace.package].version` in `Cargo.toml` is `0.1.0-rc.1`. Run the following from a clean checkout. The dry run builds the package without uploading it.
+
+   ```sh
+   cargo publish --dry-run --locked -p rally-cli
+   git push origin main
+   ```
+
+3. Once **Build and test** passes for that commit, tag the same commit and push the tag.
+
+   ```sh
+   git -c tag.gpgSign=false tag -a v0.1.0-rc.1 -m "Rally 0.1.0-rc.1"
+   git push origin v0.1.0-rc.1
+   ```
+
+4. Watch **Release Rally** in Actions. It verifies the tag matches the Cargo version, builds the binaries and images, publishes `rally-cli` to crates.io, and creates a GitHub prerelease. GHCR uses the repository's built-in token. After the first publish, open GitHub **Packages → Package settings → Change visibility → Public** for both `rally` and `rally-runtime` so installations can pull anonymously.
+5. Verify the published CLI with `cargo install rally-cli --locked --version '=0.1.0-rc.1'` and `rally --version`. The Compose bundle is attached to the versioned prerelease. GitHub's `releases/latest` URL selects stable releases.
+
+For future releases, change the workspace version, run `cargo check --workspace` to refresh `Cargo.lock`, and commit both files before tagging. Use a fresh version for each publication. If a release job fails after publication, rerun the failed jobs on the same workflow run.
 
 The deployment bundle pins the server image in `examples/compose.yml` to the exact tag. To use the template directly, put it in your installation directory alongside the setup script and example config in their bundled locations, and set `RALLY_VERSION` in `.env`.
 

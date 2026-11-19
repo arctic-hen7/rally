@@ -29,6 +29,11 @@ use std::{path::PathBuf, sync::Arc};
 use tokio::sync::{Mutex, broadcast, watch};
 use tower_http::services::{ServeDir, ServeFile};
 
+#[tokio::main]
+async fn main() -> Result<()> {
+    provider::start().await
+}
+
 #[derive(Clone)]
 pub struct App {
     provider: Arc<provider::Provider>,

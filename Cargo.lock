@@ -2545,8 +2545,26 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f8dcc9c7d52a811697d2151c701e0d08956f92b0e24136cf4cf27b57a6a0d9bf"
 
 [[package]]
-name = "rally-teams"
-version = "0.1.0"
+name = "rally-cli"
+version = "0.1.0-rc.1"
+dependencies = [
+ "anyhow",
+ "base64 0.22.1",
+ "clap",
+ "hex",
+ "rand 0.8.8",
+ "reqwest",
+ "serde_json",
+ "serde_yaml_ng",
+ "sha2",
+ "tempfile",
+ "url",
+ "uuid",
+]
+
+[[package]]
+name = "rally-server"
+version = "0.1.0-rc.1"
 dependencies = [
  "anyhow",
  "argon2",
@@ -2558,13 +2576,12 @@ dependencies = [
  "cron",
  "dotenvy",
  "futures-util",
- "hex",
  "jsonwebtoken",
  "model2vec-rs",
+ "rally-cli",
  "rand 0.8.8",
  "reqwest",
  "ring",
- "serde",
  "serde_json",
  "serde_yaml_ng",
  "sha2",
@@ -2575,7 +2592,6 @@ dependencies = [
  "toml",
  "tower-http",
  "url",
- "uuid",
  "web-push",
 ]
 
@@ -3954,7 +3970,6 @@ checksum = "3c14b15dffa2f4bd712103e857140aa04a4f2ff6e955c77d7eb8e53ee02a3b64"
 dependencies = [
  "getrandom 0.4.3",
  "js-sys",
- "serde_core",
  "wasm-bindgen",
 ]
 

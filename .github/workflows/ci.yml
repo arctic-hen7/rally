@@ -28,6 +28,8 @@ jobs:
       - name: Verify source-free Compose bundle
         run: python3 tests/release_compose.py
       - run: cargo fmt --all --check && cargo test --locked && cargo build --locked --bins
+      - name: Verify the distributable CLI crate
+        run: cargo package --locked -p rally-cli
       - working-directory: web
         run: bun install --frozen-lockfile && bun x tsc --noEmit && bun run build && bun x playwright install --with-deps chromium
       - run: sh scripts/fetch-embeddings.sh "$RUNNER_TEMP/rally-embeddings"
