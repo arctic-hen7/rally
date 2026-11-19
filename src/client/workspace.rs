@@ -219,6 +219,7 @@ pub fn open(c: &Client, mid: &str) -> Result<PathBuf> {
                 .collect::<Vec<_>>()
         ),
     )?;
+    super::secrets::first_open(c, mid, &root)?;
     Ok(root)
 }
 pub fn quote(s: &str) -> String {

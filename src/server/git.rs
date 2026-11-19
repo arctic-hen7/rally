@@ -24,16 +24,13 @@ async fn command(app: &App, root: &Path, repo: Option<&str>, args: &[&str]) -> R
         cmd.extend(["-C", name]);
     }
     cmd.extend(args);
-    engine::output(engine::command(
-        app,
-        root,
-        None,
-        &[("GIT_TERMINAL_PROMPT".into(), "0".into())],
-        None,
-        "git",
-        &cmd,
-    )?)
-    .await
+    let mid = root
+        .file_name()
+        .and_then(|s| s.to_str())
+        .ok_or_else(|| anyhow::anyhow!("Missing mission directory"))?;
+    let mut env = super::secrets::environment(app, mid, None).await?;
+    env.push(("GIT_TERMINAL_PROMPT".into(), "0".into()));
+    engine::output(engine::command(app, root, None, &env, None, "git", &cmd)?).await
 }
 
 async fn exists(app: &App, root: &Path, name: &str, revision: &str) -> bool {

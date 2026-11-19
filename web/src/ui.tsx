@@ -153,6 +153,8 @@ export type Field = {
     key: string;
     label: string;
     type?: string;
+    when?: string;
+    values?: string[];
     placeholder?: string;
     required?: boolean;
     options?: { value: string; label: string }[];
@@ -231,83 +233,94 @@ export function Editor({
                     </div>
                 ) : (
                     <form className="form" onSubmit={submit}>
-                        {form.fields.map((f) =>
-                            f.type === 'triggers' ? (
-                                <TriggerEditor
-                                    key={f.key}
-                                    value={data[f.key] || []}
-                                    change={(v) => setData({ ...data, [f.key]: v })}
-                                />
-                            ) : f.type === 'checkbox' ? (
-                                <label key={f.key} className="check-field">
-                                    <input
-                                        type="checkbox"
-                                        required={f.required}
-                                        checked={!!data[f.key]}
-                                        onChange={(e) => setData({ ...data, [f.key]: e.target.checked })}
+                        {form.fields
+                            .filter((f) => !f.when || f.values?.includes(data[f.when]))
+                            .map((f) =>
+                                f.type === 'triggers' ? (
+                                    <TriggerEditor
+                                        key={f.key}
+                                        value={data[f.key] || []}
+                                        change={(v) => setData({ ...data, [f.key]: v })}
                                     />
-                                    {f.label}
-                                </label>
-                            ) : f.type === 'markdown' ? (
-                                <div key={f.key} className="editor-field">
-                                    <span>{f.label}</span>
-                                    <MarkdownField
-                                        label={f.label}
-                                        value={data[f.key] || ''}
-                                        change={(v) => setData((old) => ({ ...old, [f.key]: v }))}
-                                    />
-                                </div>
-                            ) : f.type === 'swatches' ? (
-                                <fieldset className="swatches" key={f.key}>
-                                    <legend>{f.label}</legend>
-                                    {f.options?.map((o) => (
-                                        <label key={o.value}>
-                                            <input
-                                                type="radio"
-                                                name={f.key}
-                                                aria-label={o.label}
-                                                checked={data[f.key] === o.value}
-                                                onChange={() => setData({ ...data, [f.key]: o.value })}
-                                            />
-                                            <span aria-hidden="true" className={'status-dot ' + o.value} />
-                                            {o.label}
-                                        </label>
-                                    ))}
-                                </fieldset>
-                            ) : (
-                                <label key={f.key}>
-                                    {f.label}
-                                    {f.options ? (
-                                        <select
-                                            value={data[f.key] ?? ''}
-                                            onChange={(e) => setData({ ...data, [f.key]: e.target.value })}
-                                        >
-                                            {f.options.map((o) => (
-                                                <option key={o.value} value={o.value}>
-                                                    {o.label}
-                                                </option>
-                                            ))}
-                                        </select>
-                                    ) : f.type === 'area' || f.type === 'json' ? (
-                                        <textarea
-                                            required={f.required}
-                                            placeholder={f.placeholder}
-                                            rows={5}
-                                            value={data[f.key] ?? ''}
-                                            onChange={(e) => setData({ ...data, [f.key]: e.target.value })}
-                                        />
-                                    ) : (
+                                ) : f.type === 'checkbox' ? (
+                                    <label key={f.key} className="check-field">
                                         <input
+                                            type="checkbox"
                                             required={f.required}
-                                            type={f.type || 'text'}
-                                            placeholder={f.placeholder}
-                                            value={data[f.key] ?? ''}
-                                            onChange={(e) => setData({ ...data, [f.key]: e.target.value })}
+                                            checked={!!data[f.key]}
+                                            onChange={(e) => setData({ ...data, [f.key]: e.target.checked })}
                                         />
-                                    )}
-                                </label>
-                            ),
-                        )}
+                                        {f.label}
+                                    </label>
+                                ) : f.type === 'markdown' ? (
+                                    <div key={f.key} className="editor-field">
+                                        <span>{f.label}</span>
+                                        <MarkdownField
+                                            label={f.label}
+                                            value={data[f.key] || ''}
+                                            change={(v) => setData((old) => ({ ...old, [f.key]: v }))}
+                                        />
+                                    </div>
+                                ) : f.type === 'swatches' ? (
+                                    <fieldset className="swatches" key={f.key}>
+                                        <legend>{f.label}</legend>
+                                        {f.options?.map((o) => (
+                                            <label key={o.value}>
+                                                <input
+                                                    type="radio"
+                                                    name={f.key}
+                                                    aria-label={o.label}
+                                                    checked={data[f.key] === o.value}
+                                                    onChange={() => setData({ ...data, [f.key]: o.value })}
+                                                />
+                                                <span
+                                                    aria-hidden="true"
+                                                    className={'status-dot ' + o.value}
+                                                />
+                                                {o.label}
+                                            </label>
+                                        ))}
+                                    </fieldset>
+                                ) : (
+                                    <label key={f.key}>
+                                        {f.label}
+                                        {f.options ? (
+                                            <select
+                                                value={data[f.key] ?? ''}
+                                                onChange={(e) =>
+                                                    setData({ ...data, [f.key]: e.target.value })
+                                                }
+                                            >
+                                                {f.options.map((o) => (
+                                                    <option key={o.value} value={o.value}>
+                                                        {o.label}
+                                                    </option>
+                                                ))}
+                                            </select>
+                                        ) : f.type === 'area' || f.type === 'json' ? (
+                                            <textarea
+                                                required={f.required}
+                                                placeholder={f.placeholder}
+                                                rows={5}
+                                                value={data[f.key] ?? ''}
+                                                onChange={(e) =>
+                                                    setData({ ...data, [f.key]: e.target.value })
+                                                }
+                                            />
+                                        ) : (
+                                            <input
+                                                required={f.required}
+                                                type={f.type || 'text'}
+                                                placeholder={f.placeholder}
+                                                value={data[f.key] ?? ''}
+                                                onChange={(e) =>
+                                                    setData({ ...data, [f.key]: e.target.value })
+                                                }
+                                            />
+                                        )}
+                                    </label>
+                                ),
+                            )}
                         {error && (
                             <p role="alert" className="error">
                                 {error}

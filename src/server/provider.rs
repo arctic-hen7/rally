@@ -13,13 +13,13 @@ use tempfile::{NamedTempFile, TempDir};
 #[derive(Parser)]
 #[command(name = "rally-server", version)]
 struct Options {
-    /// Operator-owned Codex TOML configuration
+    /// Operator-owned Codex TOML configuration.
     #[arg(long, env = "RALLY_CODEX_CONFIG")]
     codex_config: PathBuf,
-    /// Use the given credential file as the installation identity
+    /// Use the given credential file as the installation identity.
     #[arg(long, env = "RALLY_CODEX_AUTH")]
     auth: Option<PathBuf>,
-    /// Let the configured provider supply its own authentication
+    /// Let the configured provider supply its own authentication.
     #[arg(long, env = "RALLY_BYPASS_AUTH")]
     bypass_auth: bool,
     #[command(subcommand)]

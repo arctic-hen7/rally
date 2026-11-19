@@ -61,6 +61,16 @@ pub async fn summary(app: &App, root: &Path, prompt: &str) -> Result<String> {
     let home = tempfile::TempDir::new_in(&app.root)?;
     let lease = app.provider.prepare(app, home.path())?;
     let mut env = environment()?;
+    env.extend(
+        super::secrets::environment(
+            app,
+            root.file_name()
+                .and_then(|s| s.to_str())
+                .context("Missing mission directory")?,
+            None,
+        )
+        .await?,
+    );
     env.extend(lease.env.clone());
     let args = [
         "exec",
@@ -166,6 +176,7 @@ async fn drive(app: &App, rid: &str, token: &str, resuming: bool) -> Result<()> 
     }
     let lease = app.provider.prepare(app, &home)?;
     let mut env = environment()?;
+    env.extend(super::secrets::environment(app, mid, Some(field(&r, "agent")?)).await?);
     env.extend(lease.env.clone());
     env.extend([
         ("RALLY_URL".into(), var("RALLY_WORKER_URL", &app.base)),

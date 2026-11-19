@@ -133,3 +133,16 @@ pub fn materialize_skills(root: &Path, bundle: &Value) -> Result<()> {
     }
     Ok(())
 }
+
+pub fn env_key(key: &str) -> bool {
+    let mut bytes = key.bytes();
+    matches!(bytes.next(), Some(b'A'..=b'Z' | b'a'..=b'z' | b'_'))
+        && bytes.all(|b| b.is_ascii_alphanumeric() || b == b'_')
+        && !["RALLY_", "CODEX_", "LD_", "DYLD_"]
+            .iter()
+            .any(|prefix| key.starts_with(prefix))
+        && !matches!(
+            key,
+            "PATH" | "HOME" | "BASH_ENV" | "ENV" | "SHELLOPTS" | "NODE_OPTIONS"
+        )
+}

@@ -1,3 +1,4 @@
+mod access;
 mod auth;
 mod catalog;
 mod chat;
@@ -8,6 +9,7 @@ pub mod provider;
 mod routines;
 mod runtime;
 mod search;
+mod secrets;
 mod skills;
 mod triggers;
 
@@ -29,6 +31,7 @@ use tower_http::services::{ServeDir, ServeFile};
 #[derive(Clone)]
 pub struct App {
     provider: Arc<provider::Provider>,
+    secret_key: Arc<ring::aead::LessSafeKey>,
     db: PgPool,
     http: reqwest::Client,
     root: PathBuf,
@@ -202,6 +205,8 @@ async fn rpc(
                 .await?;
             json!({"model":model,"provider":app.provider.status()})
         }
+        s if s.starts_with("secrets.") => secrets::call(&app, &a, s, &data).await?,
+        "resource.privacy" => access::privacy(&app, &a, &data).await?,
         "whoami" => {
             json!({"id":a.uid,"name":a.name,"owner":a.owner,"admin":a.admin,"run":a.run,"routine":a.routine})
         }
@@ -225,7 +230,11 @@ async fn rpc(
         "search" => search::query(&app, &a, &data).await?,
         _ => chat::call(&app, &a, &op, &data).await?,
     };
-    Ok(Json(result).into_response())
+    Ok((
+        [(axum::http::header::CACHE_CONTROL, "no-store")],
+        Json(result),
+    )
+        .into_response())
 }
 
 async fn live(State(app): State<App>, headers: HeaderMap) -> ApiResult {
@@ -281,7 +290,11 @@ pub async fn serve(provider: Arc<provider::Provider>) -> Result<()> {
         .ok()
         .map(|dir| model2vec_rs::model::StaticModel::from_pretrained(dir, None, Some(true), None))
         .transpose()?;
+    let has_secrets: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM scoped_secrets)")
+        .fetch_one(&db)
+        .await?;
     let app = App {
+        secret_key: Arc::new(secrets::load_key(&root, has_secrets)?),
         provider,
         db,
         http: reqwest::Client::new(),

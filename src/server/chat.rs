@@ -100,6 +100,15 @@ async fn post_hosted(
         let is_agent: bool = principal.get("agent");
         let admitted:bool=sqlx::query_scalar("SELECT can_read($1,$2) OR EXISTS(SELECT 1 FROM members WHERE mission=$2 AND principal=$1)").bind(&pid).bind(mid).fetch_one(&mut **tx).await?;
         if !admitted {
+            if is_agent
+                && !sqlx::query_scalar::<_, bool>("SELECT can_introduce($1,$2)")
+                    .bind(&a.uid)
+                    .bind(&pid)
+                    .fetch_one(&mut **tx)
+                    .await?
+            {
+                bail!("Access denied");
+            }
             if a.run.is_some() || d["confirm"] != true {
                 bail!("Confirm that {handle} may read this mission and its entire history");
             }
@@ -137,7 +146,7 @@ async fn post_hosted(
         && a.routine.is_none();
     if implicit {
         let members: Vec<String> =
-            sqlx::query_scalar("SELECT principal FROM participants WHERE thread=$1")
+            sqlx::query_scalar("SELECT principal FROM participants p JOIN threads t ON t.id=p.thread WHERE thread=$1 AND (left(p.principal,2) <> 'a_' OR EXISTS(SELECT 1 FROM members WHERE members.mission=t.mission AND members.principal=p.principal))")
                 .bind(tid)
                 .fetch_all(&mut **tx)
                 .await?;

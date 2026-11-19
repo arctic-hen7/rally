@@ -1,5 +1,6 @@
 mod hooks;
 mod oidc;
+mod secrets;
 mod workspace;
 
 use anyhow::{Context, Result, bail};
@@ -53,6 +54,21 @@ impl Client {
 }
 
 const OPS: &[(&str, &str, &str)] = &[
+    (
+        "secrets.pull",
+        "mission",
+        "Replace the local mission environment and checksums",
+    ),
+    (
+        "secrets.push",
+        "mission overwrite",
+        "Push edited keys and check for concurrent edits",
+    ),
+    (
+        "resource.privacy",
+        "target private invites confirm",
+        "Manage invitations and visibility",
+    ),
     ("hook.list", "", "List your webhooks"),
     ("hook.create", "name", "Create a webhook"),
     (
@@ -121,7 +137,7 @@ const OPS: &[(&str, &str, &str)] = &[
     ("member.list", "mission", "List mission members"),
     (
         "member.add",
-        "mission principal",
+        "mission principal confirm",
         "Grant access to the whole mission",
     ),
     (
@@ -176,7 +192,7 @@ const OPS: &[(&str, &str, &str)] = &[
     ("agent.show", "agent", "Read a role"),
     (
         "agent.create",
-        "name model instructions",
+        "name model instructions private",
         "Create an agent role",
     ),
     (
@@ -188,12 +204,12 @@ const OPS: &[(&str, &str, &str)] = &[
     ("skill.show", "skill", "Read a skill"),
     (
         "skill.create",
-        "name body description",
+        "name body description private",
         "Author a Markdown skill",
     ),
     (
         "skill.import",
-        "name remote ref path",
+        "name remote ref path private",
         "Continuously import a skill from a Git remote on the server",
     ),
     (
@@ -203,10 +219,10 @@ const OPS: &[(&str, &str, &str)] = &[
     ),
     (
         "skill.attach",
-        "skill target",
+        "skill target confirm",
         "Attach a skill to an agent or mission",
     ),
-    ("skill.detach", "skill target", "Detach a skill"),
+    ("skill.detach", "skill target confirm", "Detach a skill"),
     ("routine.list", "", "List your routines"),
     (
         "routine.show",
@@ -341,7 +357,7 @@ fn cli() -> Command {
             {
                 arg = arg.action(ArgAction::SetTrue);
             }
-            if ["mentions", "refs"].contains(&key) {
+            if ["mentions", "refs", "overwrite"].contains(&key) {
                 arg = arg.action(ArgAction::Append);
             }
             c = c.arg(arg);
@@ -400,13 +416,13 @@ pub fn main() -> Result<()> {
             if m.get_flag(key) {
                 d[key] = json!(true);
             }
-        } else if ["mentions", "refs"].contains(&key) {
+        } else if ["mentions", "refs", "overwrite"].contains(&key) {
             if let Some(v) = m.get_many::<String>(key) {
                 d[key] = json!(v.collect::<Vec<_>>());
             }
         } else if let Some(value) = m.get_one::<String>(key) {
             d[key] = if [
-                "triggers", "repos", "answer", "settings", "payload", "offset", "limit",
+                "private", "invites", "triggers", "repos", "answer", "settings", "payload", "offset", "limit",
             ]
             .contains(&key)
             {
@@ -455,6 +471,7 @@ pub fn main() -> Result<()> {
         );
     }
     let result = match op.as_str() {
+        "secrets.pull" | "secrets.push" => secrets::sync(&client, &op, &d)?,
         "config.set" => {
             let key = field(&d, "key")?;
             if !["directory", "url"].contains(&key) {

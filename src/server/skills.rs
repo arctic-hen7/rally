@@ -140,8 +140,8 @@ pub async fn refresh(app: &App) -> Result<()> {
 
 pub async fn call(app: &App, a: &Actor, op: &str, d: &Value) -> Result<Value> {
     match op{
-        "skill.list"=>rows(&app.db,"SELECT (to_jsonb(s)-'files'-'body')||jsonb_build_object('targets',ARRAY(SELECT target FROM attachments WHERE skill=s.id)) FROM skills s ORDER BY name",&[]).await,
-        "skill.show"=>one(&app.db,"SELECT to_jsonb(s)-'files' FROM skills s WHERE id=$1 OR name=$1",&[field(d,"skill")?]).await,
+        "skill.list"=>rows(&app.db,"SELECT to_jsonb(s)-'files'-'body' FROM skills s WHERE can_discover($1,id) ORDER BY name",&[&a.uid]).await,
+        "skill.show"=>one(&app.db,"SELECT to_jsonb(s)-'files' FROM skills s WHERE (id=$1 OR name=$1) AND can_discover($2,id)",&[field(d,"skill")?,&a.uid]).await,
         "skill.bundle"=>{
             let mid=mission(app,a,field(d,"mission")?,false).await?;
             bundle(app,&mid,"").await
@@ -150,7 +150,7 @@ pub async fn call(app: &App, a: &Actor, op: &str, d: &Value) -> Result<Value> {
             personal(a)?;let name=slug(field(d,"name")?)?;if name=="rally"{bail!("The rally skill is built in");}
             let sid=id("sk");
             if op=="skill.import"{remote(field(d,"remote")?)?;}else{field(d,"body")?;field(d,"description")?;}
-            sqlx::query("INSERT INTO skills(id,name,body,remote,ref,path,creator,description) VALUES($1,$2,$3,$4,$5,$6,$7,$8)").bind(&sid).bind(name).bind(opt(d,"body")).bind(d["remote"].as_str()).bind(d["ref"].as_str()).bind(d["path"].as_str()).bind(&a.uid).bind(opt(d,"description")).execute(&app.db).await?;
+            sqlx::query("INSERT INTO skills(id,name,body,remote,ref,path,creator,description,private) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)").bind(&sid).bind(name).bind(opt(d,"body")).bind(d["remote"].as_str()).bind(d["ref"].as_str()).bind(d["path"].as_str()).bind(&a.uid).bind(opt(d,"description")).bind(d["private"]==true).execute(&app.db).await?;
             if op=="skill.import"{let s=one(&app.db,"SELECT to_jsonb(s)-'files' FROM skills s WHERE id=$1",&[&sid]).await?;if let Err(e)=load(app,&s).await{execute(&app.db,"UPDATE skills SET sync_error=$2 WHERE id=$1",&[&sid,&e.to_string()]).await?;return Err(e);}}
             Ok(json!({"id":sid}))
         }
@@ -170,6 +170,11 @@ pub async fn call(app: &App, a: &Actor, op: &str, d: &Value) -> Result<Value> {
                 if !(a.owner || a.admin) && agent.get::<String,_>("creator")!=a.uid{bail!("Access denied");}agent.get("id")
             }else{mission(app,a,input,true).await?};
             let sid:String=sqlx::query_scalar("SELECT id FROM skills WHERE id=$1 OR name=$1").bind(field(d,"skill")?).fetch_one(&app.db).await?;
+            if op=="skill.attach"{
+                let private:Option<bool>=sqlx::query_scalar("SELECT private FROM skills WHERE id=$1 AND can_introduce($2,id)").bind(&sid).bind(&a.uid).fetch_optional(&app.db).await?;
+                if private.is_none(){bail!("Access denied");}
+                if private==Some(true) && d["confirm"]!=true {bail!("Confirm that everyone with access to the target can use this private skill and any secrets it has");}
+            }
             execute(&app.db,if op=="skill.attach"{"INSERT INTO attachments VALUES($1,$2) ON CONFLICT DO NOTHING"}else{"DELETE FROM attachments WHERE skill=$1 AND target=$2"},&[&sid,&target]).await?;
             Ok(json!({"ok":true}))
         }

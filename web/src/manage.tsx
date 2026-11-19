@@ -1,3 +1,4 @@
+import { ModelSettings, ResourceAccess } from './access';
 import { Webhooks } from './triggers';
 import React, { useEffect, useState } from 'react';
 import {
@@ -58,7 +59,7 @@ export const routineFields = [
         placeholder: '[{"name":"scripts","remote":"…","branch":"main"}]',
     },
 ];
-export function Manage({ page, data, edit, act, user, revision, selectMission, exit }: any) {
+export function Manage({ page, data, edit, act, user, revision, refresh, exit }: any) {
     const [selected, setSelected] = useState(''),
         [details, setDetails] = useState<any>(null),
         [error, setError] = useState('');
@@ -94,7 +95,10 @@ export function Manage({ page, data, edit, act, user, revision, selectMission, e
             edit({
                 title: 'New agent',
                 op: 'agent.create',
-                fields: roleFields,
+                fields: [
+                    ...roleFields,
+                    { key: 'private', label: 'Make this agent private', type: 'checkbox' },
+                ],
                 initial: { model: 'gpt-6.2-sol' },
                 submit: 'Create agent',
             });
@@ -102,7 +106,10 @@ export function Manage({ page, data, edit, act, user, revision, selectMission, e
             edit({
                 title: 'New skill',
                 op: 'skill.create',
-                fields: skillFields,
+                fields: [
+                    ...skillFields,
+                    { key: 'private', label: 'Make this skill private', type: 'checkbox' },
+                ],
                 submit: 'Create skill',
             });
         if (page === 'Routines')
@@ -151,6 +158,7 @@ export function Manage({ page, data, edit, act, user, revision, selectMission, e
         return (
             <div className="page">
                 <h1>Settings</h1>
+                {(user.owner || user.admin) && <ModelSettings />}
                 <Section title="Account">
                     <div className="setting-row">
                         <Avatar name={user.name} />
@@ -400,6 +408,11 @@ export function Manage({ page, data, edit, act, user, revision, selectMission, e
                                             required('remote', 'Git remote'),
                                             { key: 'ref', label: 'Branch or ref' },
                                             { key: 'path', label: 'Skill directory' },
+                                            {
+                                                key: 'private',
+                                                type: 'checkbox',
+                                                label: 'Make this skill private',
+                                            },
                                         ],
                                     })
                                 }
@@ -532,6 +545,16 @@ export function Manage({ page, data, edit, act, user, revision, selectMission, e
                                                     'Agent or mission',
                                                     options([...data.agents, ...data.missions]),
                                                 ),
+                                                ...(details.private
+                                                    ? [
+                                                          {
+                                                              key: 'confirm',
+                                                              type: 'checkbox',
+                                                              required: true,
+                                                              label: 'I understand that everyone who can use this target can use this private skill and its secrets. For an organisation-wide agent this includes the entire organisation.',
+                                                          },
+                                                      ]
+                                                    : []),
                                             ],
                                         })
                                     }
@@ -589,7 +612,7 @@ export function Manage({ page, data, edit, act, user, revision, selectMission, e
                                                 edit({
                                                     title: 'Transfer routine',
                                                     op: 'routine.transfer',
-                                                    initial: { routine: selected, confirm: true },
+                                                    initial: { routine: selected, confirm: false },
                                                     fields: [
                                                         choice(
                                                             'person',
@@ -648,6 +671,16 @@ export function Manage({ page, data, edit, act, user, revision, selectMission, e
                                 </Section>
                             </>
                         )}
+                        {['Agents', 'Skills'].includes(page) &&
+                            (details.creator === user.id || user.admin || user.owner) && (
+                                <ResourceAccess
+                                    key={details.id}
+                                    resource={details}
+                                    kind={page === 'Skills' ? 'skill' : 'agent'}
+                                    data={data}
+                                    refresh={refresh}
+                                />
+                            )}
                     </div>
                 </aside>
             )}

@@ -1,3 +1,4 @@
+import { SecretsPanel } from './access';
 import React, { useEffect, useRef, useState } from 'react';
 import {
     Activity,
@@ -60,6 +61,7 @@ export function Mission({
         [busy, setBusy] = useState(false),
         [menu, setMenu] = useState('');
     const [members, setMembers] = useState<any[]>([]);
+    const [membershipNotice, setMembershipNotice] = useState('');
     const input = useRef<HTMLTextAreaElement>(null),
         scroll = useRef<HTMLDivElement>(null);
     const tid = t.thread.id;
@@ -87,7 +89,7 @@ export function Mission({
     useEffect(() => {
         if (scroll.current) scroll.current.scrollTop = scroll.current.scrollHeight;
     }, [tid, t.messages.length]);
-    const agents = all.agents;
+    const agents = all.agents.filter((a: any) => a.introduce || members.some((m) => m.id === a.id));
     const mentionable = [...agents.map((x: any) => ({ ...x, kind: 'agent' })), ...all.people];
     const explicit = mentionable.filter((x) =>
         body.match(
@@ -517,6 +519,8 @@ export function Mission({
                                 <span>
                                     Give {fresh.map((x: any) => x.name).join(', ')} access to the entire
                                     mission history?
+                                    {fresh.some((x: any) => x.private) &&
+                                        ' Everyone in this mission will also be able to use the invited private agent and any secrets the agent has.'}
                                 </span>
                                 <button onClick={() => setConfirm(true)}>
                                     {confirm ? 'Approved' : 'Approve'}
@@ -711,9 +715,19 @@ export function Mission({
                                                         options([
                                                             ...all.people,
                                                             ...all.groups,
-                                                            ...all.agents,
+                                                            ...agents.filter((a: any) => a.introduce),
                                                         ]),
                                                     ),
+                                                    {
+                                                        key: 'confirm',
+                                                        type: 'checkbox',
+                                                        when: 'principal',
+                                                        values: agents
+                                                            .filter((a: any) => a.private)
+                                                            .map((a: any) => a.id),
+                                                        required: true,
+                                                        label: 'Give all mission members use of this private agent and any secrets the agent has',
+                                                    },
                                                 ],
                                                 submit: 'Grant access to history',
                                             })
@@ -723,14 +737,45 @@ export function Mission({
                                     </IconButton>
                                 }
                             >
+                                {membershipNotice && <p role="status">{membershipNotice}</p>}
                                 {members.map((p) => (
                                     <div className="person" key={p.id}>
                                         <Avatar name={p.name} small agent={p.kind === 'agent'} />
                                         <span>{p.name}</span>
                                         <small>{p.kind}</small>
+                                        {p.kind !== 'agent' && (
+                                            <button
+                                                onClick={async () => {
+                                                    const result = await act('member.remove', {
+                                                        mission: m.id,
+                                                        principal: p.id,
+                                                    });
+                                                    if (result)
+                                                        setMembershipNotice(
+                                                            p.name +
+                                                                ' removed.' +
+                                                                (result.remaining?.length
+                                                                    ? ' Access continues through ' +
+                                                                      result.remaining.join(', ') +
+                                                                      '.'
+                                                                    : '') +
+                                                                (result.retained?.length
+                                                                    ? ' Other grants keep access for ' +
+                                                                      result.retained
+                                                                          .map((person: any) => person.name)
+                                                                          .join(', ') +
+                                                                      '.'
+                                                                    : ''),
+                                                        );
+                                                }}
+                                            >
+                                                Remove
+                                            </button>
+                                        )}
                                     </div>
                                 ))}
                             </Section>
+                            <SecretsPanel target={m.id} />
                             <Section title="Local workspace">
                                 <code>rally open '#{m.id}'</code>
                             </Section>

@@ -44,11 +44,11 @@ pub async fn call(app: &App, a: &Actor, op: &str, d: &Value) -> Result<Value> {
             Ok(m)
         }
         "people.list"=>rows(db,"SELECT jsonb_build_object('id',id,'name',name,'kind',kind,'owner',owner,'admin',admin) FROM people ORDER BY name",&[]).await,
-        "agent.list" =>rows(db,"SELECT to_jsonb(a) FROM agents a ORDER BY name",&[]).await,
-        "agent.show"=>one(db,"SELECT to_jsonb(a) FROM agents a WHERE id=$1 OR name=$1",&[field(d,"agent")?]).await,
+        "agent.list" =>rows(db,"SELECT to_jsonb(a)||jsonb_build_object('introduce',can_introduce($1,id)) FROM agents a WHERE can_discover($1,id) ORDER BY name",&[&a.uid]).await,
+        "agent.show"=>one(db,"SELECT to_jsonb(a) FROM agents a WHERE (id=$1 OR name=$1) AND can_discover($2,id)",&[field(d,"agent")?,&a.uid]).await,
         "agent.create"=>{
             personal(a)?;let aid=id("a");
-            execute(db,"INSERT INTO agents(id,name,instructions,model,creator) VALUES($1,$2,$3,$4,$5)",&[&aid,slug(field(d,"name")?)?,opt(d,"instructions"),field(d,"model")?,&a.uid]).await?;Ok(json!({"id":aid}))
+            execute(db,"INSERT INTO agents(id,name,instructions,model,creator,private) VALUES($1,$2,$3,$4,$5,$6::text::boolean)",&[&aid,slug(field(d,"name")?)?,opt(d,"instructions"),field(d,"model")?,&a.uid,if d["private"]==true{"true"}else{"false"}]).await?;Ok(json!({"id":aid}))
         }
         "agent.update"=>{
             personal(a)?;
@@ -65,8 +65,16 @@ pub async fn call(app: &App, a: &Actor, op: &str, d: &Value) -> Result<Value> {
             if op=="member.add"{
                 let exists:bool=sqlx::query_scalar("SELECT EXISTS(SELECT id FROM people WHERE id=$1 UNION ALL SELECT id FROM groups WHERE id=$1 UNION ALL SELECT id FROM agents WHERE id=$1)").bind(pid).fetch_one(db).await?;
                 if !exists{bail!("Unknown principal");}
+                if pid.starts_with("a_"){
+                    let private:Option<bool>=sqlx::query_scalar("SELECT private FROM agents WHERE id=$1 AND can_introduce($2,id)").bind(pid).bind(&a.uid).fetch_optional(db).await?;
+                    if private.is_none(){bail!("Access denied");}
+                    if private==Some(true) && d["confirm"]!=true{bail!("Confirm that mission members can use this private agent and any secrets the agent has");}
+                }
                 execute(db,"INSERT INTO members VALUES($1,$2) ON CONFLICT DO NOTHING",&[&mid,pid]).await?;
-            }else{execute(db,"DELETE FROM members WHERE mission=$1 AND principal=$2",&[&mid,pid]).await?;}
+            }else{execute(db,"DELETE FROM members WHERE mission=$1 AND principal=$2",&[&mid,pid]).await?;
+                let remaining:Vec<String>=sqlx::query_scalar("SELECT name FROM groups g JOIN group_members gm ON gm.group_id=g.id JOIN members m ON m.principal=g.id WHERE gm.person=$1 AND m.mission=$2 UNION ALL SELECT 'workspace administrator' FROM people WHERE id=$1 AND (owner OR admin)").bind(pid).bind(&mid).fetch_all(db).await?;
+                let retained=rows(db,"SELECT jsonb_build_object('name',p.name,'id',p.id) FROM group_members gm JOIN people p ON p.id=gm.person WHERE gm.group_id=$1 AND can_read(p.id,$2) ORDER BY p.name",&[pid,&mid]).await?;
+                return Ok(json!({"id":pid,"remaining":remaining,"retained":retained}));}
             Ok(json!({"id":pid}))
         }
         "status.list" | "status.create" | "status.update" | "status.remove" => status(db, a, op, d).await,

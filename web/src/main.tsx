@@ -526,6 +526,7 @@ function App() {
                         <Manage
                             page={page}
                             data={all}
+                            refresh={refresh}
                             user={me}
                             edit={openForm}
                             act={act}

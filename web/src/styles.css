@@ -1602,3 +1602,26 @@ a {
 .form .check-field input {
     width: auto;
 }
+
+.secret-row,
+.check-field {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+.secret-row {
+    justify-content: space-between;
+    padding: 8px 0;
+    border-bottom: 1px solid var(--border);
+}
+.secret-row small {
+    display: block;
+    color: var(--muted);
+    margin-top: 3px;
+}
+.secret-edit {
+    margin-top: 8px;
+}
+.section input[type='checkbox'] {
+    width: auto;
+}

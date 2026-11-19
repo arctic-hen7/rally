@@ -130,3 +130,25 @@ CREATE TABLE IF NOT EXISTS routine_triggers (
 );
 CREATE INDEX IF NOT EXISTS trigger_due ON routine_triggers(next_at) WHERE next_at IS NOT NULL;
 ALTER TABLE jobs ADD COLUMN IF NOT EXISTS definition jsonb NOT NULL DEFAULT '{}';
+ALTER TABLE agents ADD COLUMN IF NOT EXISTS private boolean NOT NULL DEFAULT false;
+ALTER TABLE skills ADD COLUMN IF NOT EXISTS private boolean NOT NULL DEFAULT false;
+CREATE TABLE IF NOT EXISTS resource_invites (
+    resource text NOT NULL, principal text NOT NULL, PRIMARY KEY(resource,principal)
+);
+CREATE OR REPLACE VIEW library_resources AS
+    SELECT id,name,creator,private FROM agents UNION ALL SELECT id,name,creator,private FROM skills;
+CREATE OR REPLACE FUNCTION can_introduce(uid text, resource_id text) RETURNS boolean LANGUAGE sql STABLE AS $$
+    SELECT EXISTS(SELECT 1 FROM library_resources r WHERE r.id=resource_id AND (
+        NOT r.private OR r.creator=uid OR EXISTS(SELECT 1 FROM people WHERE id=uid AND (admin OR owner))
+        OR EXISTS(SELECT 1 FROM resource_invites i WHERE i.resource=r.id AND (i.principal=uid
+            OR i.principal IN (SELECT group_id FROM group_members WHERE person=uid)))))
+$$;
+CREATE OR REPLACE FUNCTION can_discover(uid text, resource_id text) RETURNS boolean LANGUAGE sql STABLE AS $$
+    SELECT can_introduce(uid,resource_id)
+        OR EXISTS(SELECT 1 FROM members WHERE principal=resource_id AND can_read(uid,mission))
+        OR EXISTS(SELECT 1 FROM attachments a JOIN missions m ON m.id=a.target WHERE a.skill=resource_id AND can_read(uid,m.id))
+$$;
+CREATE TABLE IF NOT EXISTS scoped_secrets (
+    target text NOT NULL, name text NOT NULL, ciphertext bytea NOT NULL, checksum text NOT NULL,
+    PRIMARY KEY(target,name)
+);
