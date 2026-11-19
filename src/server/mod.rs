@@ -9,6 +9,7 @@ mod routines;
 mod runtime;
 mod search;
 mod skills;
+mod triggers;
 
 use anyhow::{Result, bail};
 use axum::{
@@ -216,6 +217,7 @@ async fn rpc(
         }
         s if s.starts_with("skill.") => skills::call(&app, &a, s, &data).await?,
         s if s.starts_with("repo.") => git::call(&app, &a, s, &data).await?,
+        s if s.starts_with("hook.") => triggers::manage(&app, &a, s, &data).await?,
         s if s.starts_with("routine.") => routines::call(&app, &a, s, &data).await?,
         s if s.starts_with("inbox.") || s.starts_with("device.") => {
             notify::call(&app, &a, s, &data).await?
@@ -301,7 +303,7 @@ pub async fn serve(provider: Arc<provider::Provider>) -> Result<()> {
         .route("/api/{op}", post(rpc))
         .route("/internal/codex/refresh", post(provider::refresh))
         .route("/events", get(live))
-        .route("/hooks/{id}/{secret}", post(routines::webhook))
+        .route("/hooks/{id}", post(triggers::webhook))
         .fallback_service(
             ServeDir::new(&assets).fallback(ServeFile::new(assets.join("index.html"))),
         )

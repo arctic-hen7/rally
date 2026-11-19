@@ -10,10 +10,10 @@ base = os.environ["RALLY_URL"].rstrip("/")
 token = os.environ.get("RALLY_TOKEN")
 
 
-def request(path, data):
+def request(path, data, bearer=None):
     headers = {"Content-Type": "application/json"}
     if token:
-        headers["Authorization"] = f"Bearer {token}"
+        headers["Authorization"] = f"Bearer {bearer or token}"
     req = urllib.request.Request(base + path, json.dumps(data).encode(), headers)
     with urllib.request.urlopen(req, timeout=60) as res:
         return json.load(res)
@@ -42,11 +42,13 @@ command = (
     "rally whoami\n"
     f"rally post --thread {mission} --body 'The routine reported from its isolated container.'\n"
 )
-routine = request("/api/routine.create", {"name": "Runtime check", "command": command})
-job = request(urlsplit(routine["webhook"]).path, {"event": "compose.integration"})
+hook=request("/api/hook.create",{"name":"Compose events"})
+credential=request("/api/hook.token",{"hook":hook["id"],"name":"Integration sender"})
+routine = request("/api/routine.create", {"name": "Runtime check", "command": command, "triggers":[{"webhook":hook["id"]}]})
+job = request(urlsplit(hook["url"]).path, {"event": "compose.integration"},credential["token"])["jobs"][0]
 for _ in range(90):
     jobs = request("/api/routine.show", {"routine": routine["id"]})["jobs"]
-    record = next((row for row in jobs if row["id"] == job["id"]), None)
+    record = next((row for row in jobs if row["id"] == job), None)
     if record and record["status"] in {"done", "failed", "aborted"}:
         assert record["status"] == "done", record["output"]
         break

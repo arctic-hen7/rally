@@ -1,27 +1,9 @@
 use super::*;
 use super::{engine, git, notify, search, skills};
-use chrono::{DateTime, Utc};
-use cron::Schedule;
 use rally_teams::{digest, remote, secret, slug};
-use std::{process::Stdio, str::FromStr, time::Duration};
+use std::{process::Stdio, time::Duration};
 use tokio::io::AsyncReadExt;
 
-fn next(expr: &str) -> Result<Option<DateTime<Utc>>> {
-    if expr.is_empty() {
-        return Ok(None);
-    }
-    let expr = if expr.split_whitespace().count() == 5 {
-        format!("0 {expr}")
-    } else {
-        expr.into()
-    };
-    Ok(Some(
-        Schedule::from_str(&expr)?
-            .upcoming(Utc)
-            .next()
-            .ok_or_else(|| anyhow::anyhow!("Schedule has no future occurrence"))?,
-    ))
-}
 fn directory(value: Option<&str>) -> Result<&str> {
     let p = value.filter(|s| !s.is_empty()).unwrap_or(".");
     if p != "." {
@@ -43,105 +25,119 @@ fn validate_repos(repos: &Value) -> Result<()> {
     Ok(())
 }
 
-async fn enqueue(app: &App, id: &str, payload: &Value) -> Result<Value> {
-    let job = rally_teams::id("job");
-    let n=sqlx::query("INSERT INTO jobs(id,routine,owner_id,payload,status) SELECT $1,id,owner_id,$3,'queued' FROM routines WHERE id=$2 AND enabled").bind(&job).bind(id).bind(payload).execute(&app.db).await?.rows_affected();
-    if n != 1 {
-        bail!("Routine disabled");
-    }
-    Ok(json!({"id":job}))
-}
-pub async fn webhook(
-    State(app): State<App>,
-    Path((rid, key)): Path<(String, String)>,
-    Json(payload): Json<Value>,
-) -> ApiResult {
-    let valid: bool = sqlx::query_scalar(
-        "SELECT EXISTS(SELECT 1 FROM routines WHERE id=$1 AND hook_hash=$2 AND enabled)",
-    )
-    .bind(&rid)
-    .bind(digest(&key))
-    .fetch_one(&app.db)
-    .await?;
-    if !valid {
-        return Err(anyhow::anyhow!("Not found").into());
-    }
-    Ok((
-        StatusCode::ACCEPTED,
-        Json(enqueue(&app, &rid, &payload).await?),
-    )
-        .into_response())
-}
 pub async fn call(app: &App, a: &Actor, op: &str, d: &Value) -> Result<Value> {
     personal(a)?;
+    if op == "routine.preview" {
+        return Ok(json!(triggers::upcoming(
+            field(d, "cron")?,
+            field(d, "timezone")?
+        )?));
+    }
     if op == "routine.list" {
         return rows(
             &app.db,
-            "SELECT to_jsonb(r)-'hook_hash' FROM routines r WHERE owner_id=$1 ORDER BY name",
+            "SELECT to_jsonb(r) FROM routines r WHERE owner_id=$1 ORDER BY name",
             &[&a.uid],
         )
         .await;
     }
+    let mut tx = app.db.begin().await?;
+    let rid = if op == "routine.create" {
+        id("rt")
+    } else {
+        field(d, "routine")?.to_owned()
+    };
     if op == "routine.create" {
-        let rid = id("rt");
-        let key = secret();
-        let cron = opt(d, "cron");
         let repos = d.get("repos").cloned().unwrap_or(json!([]));
         validate_repos(&repos)?;
-        sqlx::query("INSERT INTO routines(id,name,owner_id,command,cron,hook_hash,repos,next_at,directory) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)").bind(&rid).bind(field(d,"name")?).bind(&a.uid).bind(field(d,"command")?).bind(cron).bind(digest(&key)).bind(repos).bind(next(cron)?).bind(directory(d["directory"].as_str())?).execute(&app.db).await?;
-        return Ok(json!({"id":rid,"webhook":format!("{}/hooks/{rid}/{key}",app.base)}));
+        sqlx::query("INSERT INTO routines(id,name,owner_id,command,repos,directory) VALUES($1,$2,$3,$4,$5,$6)").bind(&rid).bind(field(d,"name")?).bind(&a.uid).bind(field(d,"command")?).bind(repos).bind(directory(d["directory"].as_str())?).execute(&mut *tx).await?;
     }
-    let rid = field(d, "routine")?;
-    if op == "routine.transfer" {
+    let mut r: Value =
+        sqlx::query_scalar("SELECT to_jsonb(r) FROM routines r WHERE id=$1 FOR UPDATE")
+            .bind(&rid)
+            .fetch_one(&mut *tx)
+            .await?;
+    if op.starts_with("routine.transfer") {
         admin(a)?;
-        execute(
-            &app.db,
-            "UPDATE routines SET owner_id=$2 WHERE id=$1",
-            &[rid, field(d, "person")?],
-        )
-        .await?;
-        return Ok(json!({"id":rid}));
-    }
-    let mut r = one(
-        &app.db,
-        "SELECT to_jsonb(r)-'hook_hash' FROM routines r WHERE id=$1 AND owner_id=$2",
-        &[rid, &a.uid],
-    )
-    .await?;
-    match op {
-        "routine.show" => {
-            r["jobs"]=rows(&app.db,"SELECT to_jsonb(j)-'token_digest'-'payload' FROM jobs j WHERE routine=$1 ORDER BY created DESC LIMIT 20",&[rid]).await?;
-            Ok(r)
+        let hooks:Vec<Value>=sqlx::query_scalar("SELECT jsonb_build_object('id',w.id,'name',w.name,'exclusive',(SELECT count(*)=1 FROM routine_triggers WHERE webhook=w.id)) FROM webhooks w JOIN routine_triggers t ON t.webhook=w.id WHERE t.routine=$1 ORDER BY w.id FOR UPDATE OF w").bind(&rid).fetch_all(&mut *tx).await?;
+        if op == "routine.transfer-preview" {
+            return Ok(json!({"hooks":hooks}));
         }
-        "routine.trigger" => enqueue(app, rid, &d["payload"]).await,
-        "routine.update" => {
-            let repos = d.get("repos").unwrap_or(&r["repos"]);
-            validate_repos(repos)?;
-            let expr = d["cron"].as_str().unwrap_or(opt(&r, "cron"));
-            sqlx::query("UPDATE routines SET name=coalesce($2,name),command=coalesce($3,command),cron=$4,next_at=$5,repos=$6,directory=$7 WHERE id=$1").bind(rid).bind(d["name"].as_str()).bind(d["command"].as_str()).bind(expr).bind(next(expr)?).bind(repos).bind(directory(d["directory"].as_str().or(r["directory"].as_str()))?).execute(&app.db).await?;
-            Ok(json!({"id":rid}))
+        let recipient = field(d, "person")?;
+        if recipient == field(&r, "owner_id")? {
+            bail!("Choose a different owner");
         }
-        "routine.enable" | "routine.disable" => {
-            sqlx::query("UPDATE routines SET enabled=$2,next_at=$3 WHERE id=$1")
-                .bind(rid)
-                .bind(op == "routine.enable")
-                .bind(next(opt(&r, "cron"))?)
-                .execute(&app.db)
-                .await?;
-            Ok(json!({"id":rid}))
+        if !hooks.is_empty() && d["confirm"] != true {
+            bail!("Confirm webhook detachment or handover before transfer");
         }
-        _ => bail!("Unknown routine operation"),
-    }
-}
-
-async fn schedule(app: &App) -> Result<()> {
-    let mut tx = app.db.begin().await?;
-    for r in sqlx::query("SELECT id,cron,owner_id FROM routines WHERE enabled AND next_at<=now() FOR UPDATE SKIP LOCKED").fetch_all(&mut *tx).await?{
-        sqlx::query("INSERT INTO jobs(id,routine,owner_id,payload,status) VALUES($1,$2,$3,'{}','queued')").bind(id("job")).bind(r.get::<String,_>("id")).bind(r.get::<String,_>("owner_id")).execute(&mut *tx).await?;
-        sqlx::query("UPDATE routines SET next_at=$2 WHERE id=$1").bind(r.get::<String,_>("id")).bind(next(r.get("cron"))?).execute(&mut *tx).await?;
+        for w in &hooks {
+            let hook = field(w, "id")?;
+            if w["exclusive"] == true && d["handover"] == true {
+                sqlx::query("UPDATE webhooks SET owner_id=$2 WHERE id=$1")
+                    .bind(hook)
+                    .bind(recipient)
+                    .execute(&mut *tx)
+                    .await?;
+            } else {
+                sqlx::query("DELETE FROM routine_triggers WHERE routine=$1 AND webhook=$2")
+                    .bind(&rid)
+                    .bind(hook)
+                    .execute(&mut *tx)
+                    .await?;
+            }
+        }
+        sqlx::query("UPDATE routines SET owner_id=$2 WHERE id=$1")
+            .bind(&rid)
+            .bind(recipient)
+            .execute(&mut *tx)
+            .await?;
+    } else {
+        if r["owner_id"] != a.uid {
+            bail!("Access denied");
+        }
+        match op {
+            "routine.show" => {
+                r["triggers"] = json!(
+                    sqlx::query_scalar::<_, Value>(
+                        "SELECT to_jsonb(t) FROM routine_triggers t WHERE routine=$1 ORDER BY id"
+                    )
+                    .bind(&rid)
+                    .fetch_all(&mut *tx)
+                    .await?
+                );
+                r["jobs"]=json!(sqlx::query_scalar::<_,Value>("SELECT to_jsonb(j)-'token_digest'-'payload'-'definition' FROM jobs j WHERE routine=$1 AND owner_id=$2 ORDER BY created DESC LIMIT 20").bind(&rid).bind(&a.uid).fetch_all(&mut *tx).await?);
+                return Ok(r);
+            }
+            "routine.create" | "routine.update" => {
+                if d.get("cron").is_some() {
+                    bail!("Supply a triggers array for webhook and cron triggers");
+                }
+                if let Some(list) = d.get("triggers") {
+                    triggers::replace(&mut tx, &rid, &a.uid, list).await?;
+                }
+                if op == "routine.update" {
+                    let repos = d.get("repos").unwrap_or(&r["repos"]);
+                    validate_repos(repos)?;
+                    sqlx::query("UPDATE routines SET name=coalesce($2,name),command=coalesce($3,command),repos=$4,directory=$5 WHERE id=$1").bind(&rid).bind(d["name"].as_str()).bind(d["command"].as_str()).bind(repos).bind(directory(d["directory"].as_str().or(r["directory"].as_str()))?).execute(&mut *tx).await?;
+                }
+            }
+            "routine.trigger" => {
+                let job = triggers::enqueue(&mut tx, &r, &d["payload"]).await?;
+                tx.commit().await?;
+                return Ok(json!({"id":job}));
+            }
+            "routine.enable" | "routine.disable" => {
+                sqlx::query("UPDATE routines SET enabled=$2 WHERE id=$1")
+                    .bind(&rid)
+                    .bind(op == "routine.enable")
+                    .execute(&mut *tx)
+                    .await?;
+            }
+            _ => bail!("Unknown routine operation"),
+        }
     }
     tx.commit().await?;
-    Ok(())
+    Ok(json!({"id":rid}))
 }
 
 pub async fn maintenance(app: App) -> Result<()> {
@@ -159,7 +155,7 @@ pub async fn maintenance(app: App) -> Result<()> {
         tokio::select! {
             _=stop.changed()=>break,
             _=tick.tick()=>{
-                schedule(&app).await?;
+                triggers::schedule(&app).await?;
                 while tasks.len()<4{
                     let token=secret();
                     let row=sqlx::query("WITH p AS (SELECT id FROM jobs WHERE status='queued' ORDER BY created LIMIT 1 FOR UPDATE SKIP LOCKED) UPDATE jobs j SET status='working',token_digest=$1 FROM p WHERE j.id=p.id RETURNING j.id").bind(digest(&token)).fetch_optional(&app.db).await?;
@@ -214,7 +210,12 @@ async fn upkeep(app: App) {
 }
 
 async fn run(app: &App, jid: &str, token: &str) -> Result<(&'static str, String)> {
-    let r=one(&app.db,"SELECT (to_jsonb(r)-'hook_hash')||jsonb_build_object('payload',j.payload) FROM jobs j JOIN routines r ON r.id=j.routine WHERE j.id=$1",&[jid]).await?;
+    let r = one(
+        &app.db,
+        "SELECT definition||jsonb_build_object('payload',payload) FROM jobs WHERE id=$1",
+        &[jid],
+    )
+    .await?;
     let root = app.root.join("jobs").join(jid);
     tokio::fs::create_dir_all(&root).await?;
     tokio::fs::write(

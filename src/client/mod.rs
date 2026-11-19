@@ -53,6 +53,31 @@ impl Client {
 }
 
 const OPS: &[(&str, &str, &str)] = &[
+    ("hook.list", "", "List your webhooks"),
+    ("hook.create", "name", "Create a webhook"),
+    (
+        "hook.show",
+        "hook",
+        "Show endpoint, senders and connected routines",
+    ),
+    ("hook.token", "hook name", "Issue a sender token"),
+    ("hook.revoke", "hook token", "Revoke a sender token by ID"),
+    ("hook.remove", "hook", "Remove a webhook"),
+    (
+        "routine.transfer-preview",
+        "routine",
+        "Preview webhook handover",
+    ),
+    (
+        "routine.preview",
+        "cron timezone",
+        "Preview the next scheduled runs",
+    ),
+    (
+        "models.settings",
+        "model",
+        "Read or update the workspace WIP model",
+    ),
     ("topic.list", "", "List organisation topics"),
     ("topic.create", "slug name", "Create a topic"),
     (
@@ -190,18 +215,22 @@ const OPS: &[(&str, &str, &str)] = &[
     ),
     (
         "routine.create",
-        "name command cron repos directory",
+        "name command triggers repos directory",
         "Create a cron or webhook routine",
     ),
     (
         "routine.update",
-        "routine name command cron repos directory",
+        "routine name command triggers repos directory",
         "Edit a routine",
     ),
     ("routine.enable", "routine", "Enable a routine"),
     ("routine.disable", "routine", "Disable a routine"),
     ("routine.trigger", "routine payload", "Trigger a routine"),
-    ("routine.transfer", "routine person", "Transfer ownership"),
+    (
+        "routine.transfer",
+        "routine person confirm handover",
+        "Transfer ownership",
+    ),
     (
         "inbox.settings",
         "settings",
@@ -300,6 +329,7 @@ fn cli() -> Command {
                 k => k,
             });
             if [
+                "handover",
                 "confirm",
                 "fork",
                 "local",
@@ -357,6 +387,7 @@ pub fn main() -> Result<()> {
     let mut d = json!({});
     for key in keys.split_whitespace() {
         if [
+            "handover",
             "confirm",
             "fork",
             "local",
@@ -374,7 +405,10 @@ pub fn main() -> Result<()> {
                 d[key] = json!(v.collect::<Vec<_>>());
             }
         } else if let Some(value) = m.get_one::<String>(key) {
-            d[key] = if ["repos", "answer", "settings", "payload", "offset", "limit"].contains(&key)
+            d[key] = if [
+                "triggers", "repos", "answer", "settings", "payload", "offset", "limit",
+            ]
+            .contains(&key)
             {
                 serde_json::from_str(value)?
             } else {

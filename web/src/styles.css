@@ -1569,3 +1569,36 @@ a {
 .swatches label:has(:focus-visible) {
     outline: 2px solid #a598e7;
 }
+
+.trigger-list,
+.trigger-card {
+    display: grid;
+    gap: 12px;
+}
+.trigger-card {
+    padding: 14px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    margin: 8px 0;
+    min-width: 0;
+}
+.trigger-card header,
+.editor-inner .form .check-field {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+.trigger-card code {
+    overflow-wrap: anywhere;
+}
+.trigger-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+    gap: 10px;
+}
+.trigger-card small {
+    color: var(--muted);
+}
+.form .check-field input {
+    width: auto;
+}

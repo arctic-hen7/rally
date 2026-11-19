@@ -1,3 +1,4 @@
+import { TriggerEditor } from './triggers';
 import { MarkdownField } from './markdown-editor';
 import React, { useEffect, useRef, useState } from 'react';
 import { ArrowLeft, ArrowUpRight, Check, ChevronDown, Copy, LoaderCircle, X } from 'lucide-react';
@@ -231,7 +232,23 @@ export function Editor({
                 ) : (
                     <form className="form" onSubmit={submit}>
                         {form.fields.map((f) =>
-                            f.type === 'markdown' ? (
+                            f.type === 'triggers' ? (
+                                <TriggerEditor
+                                    key={f.key}
+                                    value={data[f.key] || []}
+                                    change={(v) => setData({ ...data, [f.key]: v })}
+                                />
+                            ) : f.type === 'checkbox' ? (
+                                <label key={f.key} className="check-field">
+                                    <input
+                                        type="checkbox"
+                                        required={f.required}
+                                        checked={!!data[f.key]}
+                                        onChange={(e) => setData({ ...data, [f.key]: e.target.checked })}
+                                    />
+                                    {f.label}
+                                </label>
+                            ) : f.type === 'markdown' ? (
                                 <div key={f.key} className="editor-field">
                                     <span>{f.label}</span>
                                     <MarkdownField

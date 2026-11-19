@@ -663,17 +663,19 @@ class Suite:
         )
 
     def routines(self):
+        hook = self.req("hook.create", {"name":"Release events"})
+        credential = self.req("hook.token", {"hook":hook["id"],"name":"Gitea"})
         result = self.req(
             "routine.create",
             {
                 "name": "Release Bot",
                 "command": f"rally post --thread {self.mid} --mention {self.agent} --body 'Investigate the release'",
-                "cron": "",
+                "triggers": [{"webhook":hook["id"]}],
             },
         )
         assert self.req("routine.list", token=self.bob) == []
         self.req("routine.show", {"routine": result["id"]}, self.bob, denied=True)
-        self.req(urllib.parse.urlsplit(result["webhook"]).path, {"event": "review"})
+        self.req(urllib.parse.urlsplit(hook["url"]).path, {"event": "review"}, credential["token"])
         show = lambda: self.req("routine.show", {"routine": result["id"]})
         wait(
             lambda: show()["jobs"] and show()["jobs"][0]["status"] == "done",
@@ -688,7 +690,7 @@ class Suite:
         )
         timed = self.req(
             "routine.create",
-            {"name": "Heartbeat", "command": "echo heartbeat", "cron": "*/2 * * * * *"},
+            {"name": "Heartbeat", "command": "echo heartbeat", "triggers": [{"cron":"*/2 * * * * *","timezone":"Australia/Sydney"}]},
         )["id"]
         wait(
             lambda: any(

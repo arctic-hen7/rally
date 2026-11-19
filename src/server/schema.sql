@@ -111,3 +111,22 @@ ALTER TABLE skills ADD COLUMN IF NOT EXISTS description text NOT NULL DEFAULT ''
 
 CREATE TABLE IF NOT EXISTS model_settings (singleton boolean PRIMARY KEY DEFAULT true CHECK(singleton), wip text NOT NULL);
 INSERT INTO model_settings(wip) VALUES ('gpt-6-luna') ON CONFLICT DO NOTHING;
+ALTER TABLE routines DROP COLUMN IF EXISTS hook_hash, DROP COLUMN IF EXISTS cron, DROP COLUMN IF EXISTS next_at;
+CREATE TABLE IF NOT EXISTS webhooks (
+    id text PRIMARY KEY, owner_id text NOT NULL REFERENCES people, name text NOT NULL
+);
+CREATE TABLE IF NOT EXISTS webhook_tokens (
+    id text PRIMARY KEY, hook text NOT NULL REFERENCES webhooks ON DELETE CASCADE,
+    name text NOT NULL, digest text NOT NULL UNIQUE, last_used timestamptz
+);
+CREATE TABLE IF NOT EXISTS webhook_deliveries (
+    hook text REFERENCES webhooks ON DELETE CASCADE, sender text NOT NULL, delivery text NOT NULL,
+    created timestamptz NOT NULL DEFAULT now(), PRIMARY KEY(hook,sender,delivery)
+);
+CREATE TABLE IF NOT EXISTS routine_triggers (
+    id text PRIMARY KEY, routine text NOT NULL REFERENCES routines ON DELETE CASCADE,
+    webhook text REFERENCES webhooks ON DELETE CASCADE, cron text, timezone text NOT NULL DEFAULT 'UTC', next_at timestamptz,
+    CHECK ((webhook IS NULL) <> (cron IS NULL)), UNIQUE(routine,webhook)
+);
+CREATE INDEX IF NOT EXISTS trigger_due ON routine_triggers(next_at) WHERE next_at IS NOT NULL;
+ALTER TABLE jobs ADD COLUMN IF NOT EXISTS definition jsonb NOT NULL DEFAULT '{}';

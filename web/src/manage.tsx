@@ -1,3 +1,4 @@
+import { Webhooks } from './triggers';
 import React, { useEffect, useState } from 'react';
 import {
     Bell,
@@ -49,7 +50,7 @@ export const routineFields = [
     required('name', 'Routine name'),
     required('command', 'Shell command', 'area'),
     { key: 'directory', label: 'Working directory', placeholder: '.' },
-    { key: 'cron', label: 'Cron schedule (UTC)', placeholder: 'Leave empty for webhook only' },
+    { key: 'triggers', label: 'Triggers', type: 'triggers' },
     {
         key: 'repos',
         label: 'Workspace repositories (JSON)',
@@ -110,7 +111,6 @@ export function Manage({ page, data, edit, act, user, revision, selectMission, e
                 op: 'routine.create',
                 fields: routineFields,
                 initial: { repos: '[]' },
-                reveal: 'webhook',
                 submit: 'Create routine',
             });
     };
@@ -418,6 +418,7 @@ export function Manage({ page, data, edit, act, user, revision, selectMission, e
                         </button>
                     </div>
                 </div>
+                {page === 'Routines' && <Webhooks edit={edit} revision={revision} act={act} />}
                 <div className="resource-list">
                     {rows.map((r: any) => (
                         <button
@@ -433,7 +434,11 @@ export function Manage({ page, data, edit, act, user, revision, selectMission, e
                                         r.description ||
                                         r.remote ||
                                         r.cron ||
-                                        (page === 'Skills' ? 'Workspace skill' : 'Webhook')}
+                                        (page === 'Skills'
+                                            ? 'Workspace skill'
+                                            : r.enabled
+                                              ? 'Enabled'
+                                              : 'Disabled')}
                                 </small>
                             </span>
                             <ChevronRight size={15} />
@@ -539,7 +544,7 @@ export function Manage({ page, data, edit, act, user, revision, selectMission, e
                                 <Section title="Command">
                                     <pre>{details.command}</pre>
                                     <small>
-                                        {details.cron || 'Webhook'} ·{' '}
+                                        {details.triggers?.length} triggers ·{' '}
                                         {details.enabled ? 'Enabled' : 'Disabled'}
                                     </small>
                                 </Section>
@@ -574,6 +579,63 @@ export function Manage({ page, data, edit, act, user, revision, selectMission, e
                                         Edit
                                     </button>
                                 </div>
+                                {(user.admin || user.owner) && (
+                                    <button
+                                        onClick={async () => {
+                                            try {
+                                                const { hooks } = await api('routine.transfer-preview', {
+                                                    routine: selected,
+                                                });
+                                                edit({
+                                                    title: 'Transfer routine',
+                                                    op: 'routine.transfer',
+                                                    initial: { routine: selected, confirm: true },
+                                                    fields: [
+                                                        choice(
+                                                            'person',
+                                                            'New owner',
+                                                            options(
+                                                                data.people.filter(
+                                                                    (p: any) => p.id !== user.id,
+                                                                ),
+                                                            ),
+                                                        ),
+                                                        ...(hooks.length
+                                                            ? [
+                                                                  {
+                                                                      key: 'handover',
+                                                                      type: 'checkbox',
+                                                                      label:
+                                                                          'Transfer exclusive webhooks with this routine: ' +
+                                                                          (hooks
+                                                                              .filter((h: any) => h.exclusive)
+                                                                              .map((h: any) => h.name)
+                                                                              .join(', ') || 'none'),
+                                                                  },
+                                                                  {
+                                                                      key: 'confirm',
+                                                                      type: 'checkbox',
+                                                                      required: true,
+                                                                      label:
+                                                                          'Disconnect webhooks that are not transferred: ' +
+                                                                          hooks
+                                                                              .map((h: any) => h.name)
+                                                                              .join(', '),
+                                                                  },
+                                                              ]
+                                                            : []),
+                                                    ],
+                                                    submit: 'Transfer ownership',
+                                                });
+                                            } catch (e: any) {
+                                                setError(e.message);
+                                            }
+                                        }}
+                                    >
+                                        Transfer ownership
+                                    </button>
+                                )}
+                                {error && <p role="alert">{error}</p>}
                                 <Section title="Recent runs">
                                     {details.jobs.map((j: any) => (
                                         <details key={j.id}>
