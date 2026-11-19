@@ -11,3 +11,6 @@ artifacts
 test.env
 web/test-results
 web/playwright-report
+.aws
+.codex
+.agents

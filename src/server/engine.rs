@@ -45,24 +45,43 @@ pub async fn build(app: &App) -> Result<()> {
     let cli = std::env::current_exe()?.with_file_name("rally");
     tokio::fs::copy(cli, tools.join("rally.new")).await?;
     tokio::fs::rename(tools.join("rally.new"), tools.join("rally")).await?;
-    build_image().await
+    prepare_image().await
 }
 
-pub async fn build_image() -> Result<()> {
-    let context = var("RALLY_BUILD_DIR", "runtime");
-    let status = engine()
-        .args([
-            "build",
-            "--tag",
-            &var("RALLY_RUNTIME_IMAGE", "localhost/rally-runtime:local"),
-            "--file",
-            &format!("{context}/Containerfile"),
-            &context,
-        ])
-        .status()
-        .await?;
-    if !status.success() {
-        bail!("Rally runtime image build failed");
+pub fn runtime_image() -> String {
+    var("RALLY_RUNTIME_IMAGE", "localhost/rally-runtime:local")
+}
+
+pub async fn prepare_image() -> Result<()> {
+    let image = runtime_image();
+    let mode = var("RALLY_RUNTIME_MODE", "build");
+    let mut cmd = engine();
+    match mode.as_str() {
+        "pull" => {
+            let cached = engine().args(["image", "exists", &image]).status().await?;
+            match cached.code() {
+                Some(0) => return Ok(()),
+                Some(1) => {
+                    cmd.args(["pull", &image]);
+                }
+                _ => bail!("Could not inspect Rally runtime image {image}: {cached}"),
+            }
+        }
+        "build" => {
+            let context = var("RALLY_BUILD_DIR", "runtime");
+            cmd.args([
+                "build",
+                "--tag",
+                &image,
+                "--file",
+                &format!("{context}/Containerfile"),
+                &context,
+            ]);
+        }
+        _ => bail!("RALLY_RUNTIME_MODE must be pull or build"),
+    }
+    if !cmd.status().await?.success() {
+        bail!("Failed to {mode} Rally runtime image {image}");
     }
     Ok(())
 }
@@ -158,9 +177,7 @@ pub fn command(
     for (key, value) in env {
         c.env(key, value).args(["--env", key]);
     }
-    c.arg(var("RALLY_RUNTIME_IMAGE", "localhost/rally-runtime:local"))
-        .arg(program)
-        .args(args);
+    c.arg(runtime_image()).arg(program).args(args);
     Ok(c)
 }
 

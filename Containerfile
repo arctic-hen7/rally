@@ -19,5 +19,8 @@ COPY --from=rust /source/target/release/rally-server /usr/local/bin/rally-server
 COPY --from=web /web/dist /opt/rally/web
 COPY scripts/fetch-embeddings.sh /opt/rally/
 RUN sh /opt/rally/fetch-embeddings.sh /opt/rally/embeddings
+ARG RALLY_RUNTIME_IMAGE=localhost/rally-runtime:local
+ARG RALLY_RUNTIME_MODE=build
+ENV RALLY_RUNTIME_IMAGE=$RALLY_RUNTIME_IMAGE RALLY_RUNTIME_MODE=$RALLY_RUNTIME_MODE
 ENV RALLY_WEB_DIR=/opt/rally/web RALLY_EMBEDDING_DIR=/opt/rally/embeddings
 ENTRYPOINT ["rally-server"]

@@ -91,7 +91,7 @@ async fn login(root: &Path, config: &str, dest: &Path) -> Result<()> {
         cmd.env("CODEX_HOME", stage.path());
         cmd
     } else {
-        engine::build_image().await?;
+        engine::prepare_image().await?;
         let mut cmd = engine::engine();
         let host =
             PathBuf::from(std::env::var("RALLY_HOST_DATA")?).join(stage.path().strip_prefix(root)?);
@@ -105,7 +105,7 @@ async fn login(root: &Path, config: &str, dest: &Path) -> Result<()> {
             "CODEX_HOME=/login",
             "--volume",
             &format!("{}:/login:rw", host.display()),
-            &var("RALLY_RUNTIME_IMAGE", "localhost/rally-runtime:local"),
+            &engine::runtime_image(),
             "codex",
         ]);
         cmd
