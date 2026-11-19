@@ -55,28 +55,18 @@ Set `RALLY_LISTEN=127.0.0.1:18879` in the disposable config for the example port
 
 GitHub Actions runs Rust and frontend builds and the PostgreSQL/Chromium integration suite. A pushed `v*` tag builds Linux x86-64 and ARM64 bundles (server, CLI, web app, worker context and docs) and a macOS ARM64 CLI archive. On native Linux runners, the workflow builds the server and worker images for both architectures and combines their registry digests into version-tagged GHCR images. GitHub Releases receives the binaries, `rally-compose.tar.gz` and SHA-256 checksums after both image tags are available.
 
-### Cut the first release candidate
+### Cut a release
 
-1. Sign in to crates.io, verify your email, and create a short-lived personal API token with permission to publish a new crate. Run `cargo login --registry crates-io` locally and paste that token at the prompt.
-2. On a clean `main`, confirm `[workspace.package].version` in `Cargo.toml` is `0.1.0-rc.1`. Verify the package and push the release commit.
+Once **Build and test** passes on the commit you want to release, create and push an annotated Git tag. For example, to release that commit as the third candidate:
 
-   ```sh
-   cargo publish --dry-run --locked -p rally-cli
-   git push origin main
-   ```
+```sh
+git -c tag.gpgSign=false tag -a v0.1.0-rc.3 -m "Rally 0.1.0-rc.3"
+git push origin refs/tags/v0.1.0-rc.3
+```
 
-3. Once **Build and test** passes for that commit, publish the crate locally. After Cargo confirms publication, tag the same commit and push the tag.
+The pushed tag supplies the release version, including the exact spelling of any prerelease suffix. Use a `v` followed by a SemVer version compatible with container tags, such as `v0.1.0` or `v0.1.0-rc.3`. Actions writes the tag version into the build checkout and shares the resulting Cargo manifest and lockfile with the binary, image and crates.io jobs. Ordinary source builds use `0.0.0-dev`. The release requires no version-bump commit.
 
-   ```sh
-   cargo publish --locked -p rally-cli --registry crates-io
-   git -c tag.gpgSign=false tag -a v0.1.0-rc.1 -m "Rally 0.1.0-rc.1"
-   git push origin v0.1.0-rc.1
-   ```
-
-4. Watch **Release Rally** in Actions. For this first tag it builds the binaries and images and creates the GitHub prerelease. Future tags also publish the CLI using the repository secret `CARGO_REGISTRY_TOKEN`, which needs permission to publish updates to `rally-cli`. After the first image publish, open GitHub **Packages → Package settings → Change visibility → Public** for both `rally` and `rally-runtime` so installations can pull anonymously.
-5. Verify the published CLI with `cargo install rally-cli --locked --version '=0.1.0-rc.1'` and `rally --version`. The Compose bundle is attached to the versioned prerelease. GitHub's `releases/latest` URL selects stable releases.
-
-For future releases, change the workspace version, run `cargo check --workspace` to refresh `Cargo.lock`, and commit both files before tagging. Use a fresh version for each publication. If a release job fails after publication, rerun the failed jobs on the same workflow run.
+Actions uses the repository secret `CARGO_REGISTRY_TOKEN` to publish updates to `rally-cli` and the built-in repository token for GHCR. Prerelease bundles are on the versioned GitHub release page. If a job fails after publication, rerun the failed jobs on the same workflow run.
 
 The deployment bundle pins the server image in `examples/compose.yml` to the exact tag. To use the template directly, put it in your installation directory alongside the setup script and example config in their bundled locations, and set `RALLY_VERSION` in `.env`.
 
@@ -85,6 +75,6 @@ To test Linux packaging on a workstation, run:
 ```sh
 cargo build --locked --release --bins
 (cd web && bun run build)
-sh scripts/package-release.sh v0.1.0 linux-x86_64
+sh scripts/package-release.sh v0.0.0-dev linux-x86_64
 (cd artifacts && sha256sum -c *.sha256)
 ```

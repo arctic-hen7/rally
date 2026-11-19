@@ -4,7 +4,8 @@ default-members = [".", "src/server"]
 resolver = "3"
 
 [workspace.package]
-version = "0.1.0-rc.2"
+# Release builds take their version from the pushed Git tag
+version = "0.0.0-dev"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/arctic-hen7/rally"

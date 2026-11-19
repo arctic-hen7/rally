@@ -1,6 +1,6 @@
 # Rally CLI
 
-The `rally` command connects your local Git workspaces, agent sessions and scripts to a self-hosted Rally server. Install the release candidate on Linux or macOS with `cargo install rally-cli --locked --version '=0.1.0-rc.2'`. You can also download a prebuilt binary from GitHub Releases or build from a checkout with `cargo install --path . --locked`.
+The `rally` command connects your local Git workspaces, agent sessions and scripts to a self-hosted Rally server. Install a release on Linux or macOS with `cargo install rally-cli --locked --version '=VERSION'`, replacing `VERSION` with the release tag without its leading `v`. You can also download a prebuilt binary from GitHub Releases or build from a checkout with `cargo install --path . --locked`.
 
 Use `rally --help` and `rally <command> --help` for flags. Add `--json` for machine-readable output.
 

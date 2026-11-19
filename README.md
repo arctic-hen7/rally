@@ -6,10 +6,9 @@ The Rust server stores mission state in PostgreSQL. The React PWA, Rust CLI, ext
 
 ## Start a server
 
-Use a Linux AMD64 or ARM64 host with rootless Podman, podman-compose, OpenSSL and a systemd user session. Download the deployment bundle from [GitHub Releases](https://github.com/arctic-hen7/rally/releases).
+Use a Linux AMD64 or ARM64 host with rootless Podman, podman-compose, OpenSSL and a systemd user session. Download `rally-compose.tar.gz` from your chosen release on [GitHub Releases](https://github.com/arctic-hen7/rally/releases).
 
 ```sh
-curl -fLO https://github.com/arctic-hen7/rally/releases/download/v0.1.0-rc.2/rally-compose.tar.gz
 tar -xzf rally-compose.tar.gz
 cd rally
 systemctl --user enable --now podman.socket
@@ -24,7 +23,7 @@ The deployment template lives in [examples/compose.yml](examples/compose.yml). F
 
 ## Use the CLI
 
-Download the binary archive for your platform from the same release and put `bin/rally` on your PATH, or install the CLI from crates.io with `cargo install rally-cli --locked --version '=0.1.0-rc.2'`.
+Download the binary archive for your platform from the same release and put `bin/rally` on your PATH, or install the CLI from crates.io with `cargo install rally-cli --locked --version '=VERSION'`. Replace `VERSION` with the release tag without its leading `v`.
 
 ```sh
 rally login --url http://localhost:8787 --email you@example.org
