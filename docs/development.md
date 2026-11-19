@@ -57,22 +57,23 @@ GitHub Actions runs Rust and frontend builds and the PostgreSQL/Chromium integra
 
 ### Cut the first release candidate
 
-1. Sign in to crates.io, verify your email, and create an API token with permission to publish the new `rally-cli` crate. For subsequent versions the workflow needs permission to publish updates to that crate. Save the token as a GitHub Actions repository secret by running `gh secret set CARGO_REGISTRY_TOKEN` from this checkout and pasting it at the prompt.
-2. On `main`, check that `[workspace.package].version` in `Cargo.toml` is `0.1.0-rc.1`. Run the following from a clean checkout. The dry run builds the package without uploading it.
+1. Sign in to crates.io, verify your email, and create a short-lived personal API token with permission to publish a new crate. Run `cargo login --registry crates-io` locally and paste that token at the prompt.
+2. On a clean `main`, confirm `[workspace.package].version` in `Cargo.toml` is `0.1.0-rc.1`. Verify the package and push the release commit.
 
    ```sh
    cargo publish --dry-run --locked -p rally-cli
    git push origin main
    ```
 
-3. Once **Build and test** passes for that commit, tag the same commit and push the tag.
+3. Once **Build and test** passes for that commit, publish the crate locally. After Cargo confirms publication, tag the same commit and push the tag.
 
    ```sh
+   cargo publish --locked -p rally-cli --registry crates-io
    git -c tag.gpgSign=false tag -a v0.1.0-rc.1 -m "Rally 0.1.0-rc.1"
    git push origin v0.1.0-rc.1
    ```
 
-4. Watch **Release Rally** in Actions. It verifies the tag matches the Cargo version, builds the binaries and images, publishes `rally-cli` to crates.io, and creates a GitHub prerelease. GHCR uses the repository's built-in token. After the first publish, open GitHub **Packages → Package settings → Change visibility → Public** for both `rally` and `rally-runtime` so installations can pull anonymously.
+4. Watch **Release Rally** in Actions. For this first tag it builds the binaries and images and creates the GitHub prerelease. Future tags also publish the CLI using the repository secret `CARGO_REGISTRY_TOKEN`, which needs permission to publish updates to `rally-cli`. After the first image publish, open GitHub **Packages → Package settings → Change visibility → Public** for both `rally` and `rally-runtime` so installations can pull anonymously.
 5. Verify the published CLI with `cargo install rally-cli --locked --version '=0.1.0-rc.1'` and `rally --version`. The Compose bundle is attached to the versioned prerelease. GitHub's `releases/latest` URL selects stable releases.
 
 For future releases, change the workspace version, run `cargo check --workspace` to refresh `Cargo.lock`, and commit both files before tagging. Use a fresh version for each publication. If a release job fails after publication, rerun the failed jobs on the same workflow run.
