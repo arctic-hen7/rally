@@ -9,7 +9,7 @@ import tempfile
 
 root = Path(__file__).resolve().parents[1]
 release = "v1.2.3-test.1"
-image = "ghcr.io/example/rally"
+image = "registry.example.test:5443/example/rally"
 env = {k: v for k, v in os.environ.items() if not k.startswith(("RALLY_", "COMPOSE_"))}
 env.pop("DATABASE_URL", None)
 

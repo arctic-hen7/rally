@@ -9,7 +9,7 @@ case "$version" in
     *) echo "Expected a v-prefixed release tag" >&2; exit 1 ;;
 esac
 case "$image" in
-    *[!a-z0-9./_-]*|'') echo "Invalid image name" >&2; exit 1 ;;
+    *[!a-z0-9./_:-]*|'') echo "Invalid image name" >&2; exit 1 ;;
 esac
 mkdir -p "$out"
 out=$(cd "$out" && pwd)
