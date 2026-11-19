@@ -25,7 +25,7 @@ For access from other devices, point your HTTPS reverse proxy at the loopback li
 | `DATABASE_URL` | An existing PostgreSQL database. With an external database run `podman-compose -p rally up -d --build --no-deps server`. The database role needs permission to create and update tables in this database. The Compose file still requires its DB password variable for interpolation. |
 | `RALLY_LISTEN` | Host interface and port to publish, default `127.0.0.1:8787`. |
 
-The first start builds the shared runtime image. Public package registries and the pinned embedding model download must be reachable during image builds. Worker networking must allow access to Rally, relevant Git remotes and your configured model provider. Configure the operator's Git credentials separately for private server-side skill imports.
+The first start builds the shared runtime image. Public package registries and the pinned embedding model download must be reachable during image builds. Workers need access to Rally and your configured model provider. The server needs HTTPS access to Git remotes. Users configure their forge accounts in Settings under **Git connections**. For a private CA, put its PEM bundle under the host data directory and set `RALLY_GIT_CA_FILE` to its server-visible path, for example `/var/lib/rally/forge-ca.pem`, before starting the server.
 
 ## Codex configuration and login
 
@@ -58,3 +58,8 @@ On Linux, unpack the release, put both binaries alongside each other on PATH, an
 For a consistent backup, gracefully stop the server, take a PostgreSQL dump including its schema, and copy the entire host data directory. Include `keys/secrets.key` from the data directory. The encrypted secrets in PostgreSQL require this key. Protect the backup, including the shared Codex login, and save operator configuration and worker build context separately. The data directory includes unpushed work and the native session state required to resume work. Restore the database and matching directory together, correct the absolute mount paths, then start Rally. Back up Git remotes separately.
 
 For an upgrade, back up, update the checkout and recreate the server with `podman-compose -p rally up -d --build --force-recreate --no-deps server`. Startup applies the bundled schema and rebuilds the shared runtime. A graceful shutdown sends termination to active workers and records interrupted mission runs for the next startup.
+
+
+### Upgrading repositories to personal connections
+
+Existing mission repositories appear as **Needs transfer** until a member chooses **Take over** with their own Git connection. The hosted checkout is preserved. For a legacy SSH URL, attach its HTTPS URL under a fresh checkout name and reconcile any local edits before retiring the old attachment. Remove any previously configured forge credentials from shared worker mounts or environment variables once you have moved those repositories to personal connections.

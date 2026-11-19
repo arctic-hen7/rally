@@ -10,7 +10,7 @@ Mention a role in a hosted thread to start it. An agent has one persistent nativ
 
 Supply one operator-owned build directory containing a `Containerfile` via `RALLY_RUNTIME_DIR` in Compose. Start from the repository's runtime image definition. Add system tools such as `tea`, `mise`, project compilers or a different ACP adapter there. Recreate the server after changing runtime configuration. Repositories may carry their own tool versions, scripts and skills.
 
-Keep secret files outside the build context. Pass host paths in `RALLY_RUNTIME_MOUNTS` as a JSON array of Podman bind specifications and environment variables in `RALLY_RUNTIME_ENV` as a JSON object. These settings apply to agents and arbitrary routine scripts. Everyone who can author a routine must be trusted with any credentials available inside the shared environment. Use narrow Git and provider credentials. Operator-managed secret stores can deliver the mounted files. The engine socket belongs only in the server.
+Keep secret files outside the build context. Pass host paths in `RALLY_RUNTIME_MOUNTS` as a JSON array of Podman bind specifications and environment variables in `RALLY_RUNTIME_ENV` as a JSON object. These settings apply to agents and arbitrary routine scripts. Everyone who can author a routine must be trusted with any credentials available inside the shared environment. Use personal Git connections for hosted repository access. Operator-managed secret stores can deliver the mounted files. The engine socket belongs only in the server.
 
 Podman provides the hosted execution boundary. Inside that container the bundled harness can run commands without a second OS sandbox or interactive approval. Hosts using the development-only local engine retain the native workspace sandbox.
 

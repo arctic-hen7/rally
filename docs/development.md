@@ -17,7 +17,7 @@ export RALLY_TEST_ADMIN_URL=postgres://postgres@localhost/postgres
 RALLY_TEST_BROWSER=1 python3 tests/integration.py
 ```
 
-Supply the appropriate credentials for your test database. With system Chromium, set `CHROMIUM_PATH` to the executable. Browser screenshots and failed traces are under `web/test-results/`. The integration suite creates a randomly named database and temporary workspace, runs the real binaries, then drops that database. It exercises signed OIDC, local membership, harness messages and recovery, Git divergence, skill updates, external hooks, search and cron/webhook routines. A deterministic protocol peer lets CI test dispatch and steering without provider credentials.
+Supply the appropriate credentials for your test database. With system Chromium, set `CHROMIUM_PATH` to the executable. Browser screenshots and failed traces are under `web/test-results/`. The integration suite creates a randomly named database and temporary workspace, runs the real binaries, then drops that database. It exercises signed OIDC, local membership, harness messages and recovery, Git divergence, two contributor identities on a disposable HTTPS forge, delegated push and takeover, silent routine dispatch, skill sync and reconnection, external hooks, search and cron/webhook routines. A deterministic protocol peer lets CI test dispatch and steering without provider credentials.
 
 For local development serve `web/dist` with the server after building the app. The server reads `DATABASE_URL`, `RALLY_DATA`, `RALLY_BOOTSTRAP_SECRET` and optionally `RALLY_WEB_DIR`. `RALLY_ENGINE=local` executes commands directly as the server's OS user. Reserve that setting for development fixtures on a trusted machine. The deployment uses rootless Podman.
 
@@ -37,7 +37,7 @@ export RALLY_TEST_PASSWORD=your-disposable-password
 python3 tests/hosted_smoke.py
 ```
 
-Set `RALLY_LISTEN=127.0.0.1:18879` in the disposable config for the example port. Bootstrap the fixture's organisation owner first. The hosted smoke test dispatches two turns to a real Codex harness, runs a shell command inside its container and checks the resulting file on the host. Recreate the server with `RALLY_ADAPTER=codex` to exercise its native protocol. For the routine round trip, set `RALLY_TOKEN` to a token from this test organisation and run `python3 tests/compose_smoke.py`. The routine verifies the engine socket is absent in its container and uses the mounted CLI to post to the test mission. Shut down the specific Compose project with the same env file and file list.
+Set `RALLY_LISTEN=127.0.0.1:18879` in the disposable config for the example port. Bootstrap the fixture's organisation owner first. The hosted smoke test dispatches two turns to a real Codex harness, runs a shell command inside its container and checks the resulting file on the host. Set `RALLY_TEST_GIT_ORIGIN` for the smoke test if you have started the disposable HTTPS forge from `tests/git_forge.py` on the test network and configured its CA on the server. The offline provider will also ask Codex to fetch and push the fixture repository. Recreate the server with `RALLY_ADAPTER=codex` to exercise its native protocol. For the routine round trip, set `RALLY_TOKEN` to a token from this test organisation and run `python3 tests/compose_smoke.py`. The routine verifies the engine socket is absent in its container and uses the mounted CLI to post to the test mission. Shut down the specific Compose project with the same env file and file list.
 
 ## CI and releases
 

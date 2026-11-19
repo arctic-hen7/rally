@@ -38,6 +38,7 @@ rally search 'why did we choose this approach?'
 
 Release archives include the CLI. Linux archives also include the server and compiled web app.
 
+- [Personal Git connections and repository handover](docs/git-connections.md)
 - [Installation, credentials, backups, and upgrades](docs/installation.md)
 - [Missions, Git recovery, access, and notifications](docs/missions.md)
 - [CLI, local workspaces, external sessions, and exports](docs/cli.md)

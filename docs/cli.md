@@ -48,19 +48,23 @@ rally run follow --run RUN_ID
 rally run steer --run RUN_ID --body 'Focus on declined payments.'
 ```
 
+Use `--silent` on a routine post to deliver the addressing message without adding it to the shared transcript. Questions and agent outcomes still appear.
+
 Use `--mention` and `--link` to send structured references from scripts. The first mention inviting a new principal requires `--confirm`. A retryable script can pass the same `--key` for each attempt to deliver a given event. Inside a mission root or its checkout many commands infer the mission. Hosted workers also inherit the current thread.
 
 | Commands | What they change or read |
 | --- | --- |
 | `topic list/create`, `mission list/show/create/update/fork` | Organise tasks. `mission update dev-12 --title … --description …` edits its descriptive fields. Use `rally status list` to find a status ID and `rally mission update dev-12 --status ID` to apply it. |
-| `repo add/list/status/remove/push/return`, `sync`, `wip` | Manage branch bindings and hosted changes. Use `wip --mission dev-12 --name project --fork` for a recovery branch. |
+| `repo add/list/status/remove/takeover/withdraw/push/return`, `sync`, `wip` | Manage branch bindings and hosted changes. Use `wip --mission dev-12 --name project --fork` for a recovery branch. |
 | `thread create/rename/subscribe/mute`, `inbox list/read` | Manage conversations and subscriptions. |
 | `status list/create/update/remove` | List workflow statuses or manage their display names and colors. |
 | `account invite --email … --role admin`, `account role --person ID --role member` | Invite a local admin or change an existing human account’s role as organisation owner. |
 | `people list`, `member add/remove/list`, `group create/add/remove/list` | Manage access by individual or group IDs. |
-| `agent list/show/create/update`, `skill create/edit/import/attach/detach/list/show` | Manage roles, instructions, models and reusable skills. |
+| `agent list/show/create/update`, `skill create/edit/import/reconnect/attach/detach/list/show` | Manage roles, instructions, models and reusable skills. |
 | `routine create/update/show/list/trigger/enable/disable/transfer` | Run and maintain cron and webhook scripts. |
 | `run show/follow/steer/answer/stop` | Watch and interact with hosted work. `--answer` accepts a JSON object keyed by question ID. |
+
+Use Settings or `rally connection create` to register personal HTTPS Git accounts. [Git connections and delegation](git-connections.md)
 
 ## Capture local sessions
 
