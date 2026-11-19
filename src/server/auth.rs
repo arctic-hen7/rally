@@ -46,7 +46,7 @@ pub async fn actor(app: &App, headers: &HeaderMap) -> Result<Actor> {
         .or_else(|| cookie(headers, "rally_session"))
         .ok_or_else(|| anyhow::anyhow!("Sign in required"))?;
     let hash = digest(token);
-    let row=sqlx::query("SELECT p.id,p.name,p.owner,p.admin,NULL::text AS run,NULL::text AS routine FROM tokens t JOIN people p ON p.id=t.person WHERE t.digest=$1 AND (t.expires IS NULL OR t.expires>now()) UNION ALL SELECT p.id,a.name,false,false,r.id,NULL FROM runs r JOIN people p ON p.id=r.dispatcher JOIN sessions s ON s.id=r.session JOIN agents a ON a.id=s.agent WHERE r.token_digest=$1 AND r.status='working' UNION ALL SELECT p.id,t.name,p.owner,p.admin,NULL,t.id FROM jobs j JOIN people p ON p.id=j.owner_id JOIN routines t ON t.id=j.routine WHERE j.token_digest=$1 AND j.status='working'").bind(hash).fetch_optional(&app.db).await?.ok_or_else(||anyhow::anyhow!("Sign in required"))?;
+    let row=sqlx::query("SELECT p.id,p.name,p.owner,p.admin,NULL::text AS run,NULL::text AS routine,NULL::text AS job FROM tokens t JOIN people p ON p.id=t.person WHERE t.digest=$1 AND (t.expires IS NULL OR t.expires>now()) UNION ALL SELECT p.id,a.name,false,false,r.id,NULL,NULL FROM runs r JOIN people p ON p.id=r.dispatcher JOIN sessions s ON s.id=r.session JOIN agents a ON a.id=s.agent WHERE r.token_digest=$1 AND r.status='working' UNION ALL SELECT p.id,t.name,p.owner,p.admin,NULL,t.id,j.id FROM jobs j JOIN people p ON p.id=j.owner_id JOIN routines t ON t.id=j.routine AND t.owner_id=j.owner_id WHERE j.token_digest=$1 AND j.status='working'").bind(hash).fetch_optional(&app.db).await?.ok_or_else(||anyhow::anyhow!("Sign in required"))?;
     Ok(Actor {
         uid: row.get("id"),
         name: row.get("name"),
@@ -54,6 +54,7 @@ pub async fn actor(app: &App, headers: &HeaderMap) -> Result<Actor> {
         admin: row.get("admin"),
         run: row.get("run"),
         routine: row.get("routine"),
+        job: row.get("job"),
     })
 }
 

@@ -104,7 +104,7 @@ const OPS: &[(&str, &str, &str)] = &[
     ("mission.show", "mission", "Show a mission and its branches"),
     (
         "mission.create",
-        "topic title description",
+        "topic title description repos confirm",
         "Create a mission",
     ),
     (
@@ -122,7 +122,7 @@ const OPS: &[(&str, &str, &str)] = &[
     ("status.remove", "status", "Remove an unused status"),
     (
         "account.role",
-        "person role",
+        "person role preview confirm",
         "Assign member or admin access",
     ),
     (
@@ -133,7 +133,11 @@ const OPS: &[(&str, &str, &str)] = &[
     ("group.list", "", "List groups"),
     ("group.create", "name", "Create a group"),
     ("group.add", "group person", "Add a user to a group"),
-    ("group.remove", "group person", "Remove a user from a group"),
+    (
+        "group.remove",
+        "group person preview confirm",
+        "Remove a user from a group",
+    ),
     ("member.list", "mission", "List mission members"),
     (
         "member.add",
@@ -142,7 +146,7 @@ const OPS: &[(&str, &str, &str)] = &[
     ),
     (
         "member.remove",
-        "mission principal",
+        "mission principal preview confirm",
         "Remove a direct mission grant",
     ),
     ("account.invite", "email role", "Invite a local user"),
@@ -151,11 +155,51 @@ const OPS: &[(&str, &str, &str)] = &[
     ("token.create", "name", "Issue a personal API token"),
     ("token.list", "", "List personal tokens"),
     ("token.revoke", "id", "Revoke a token"),
+    (
+        "connection.list",
+        "",
+        "List your personal HTTPS Git connections",
+    ),
+    (
+        "connection.create",
+        "name host username token-stdin",
+        "Save a Git connection and read its token securely",
+    ),
+    (
+        "connection.update",
+        "connection token-stdin",
+        "Replace the access token",
+    ),
+    (
+        "connection.usage",
+        "connection",
+        "Show repositories, routines and skills using a connection",
+    ),
+    (
+        "connection.remove",
+        "connection confirm",
+        "Disconnect a Git account and pause its attachments",
+    ),
+    (
+        "repo.takeover",
+        "mission name connection confirm",
+        "Take responsibility for hosted Git access",
+    ),
+    (
+        "repo.withdraw",
+        "mission name",
+        "Withdraw your Git access from a repository",
+    ),
+    (
+        "skill.reconnect",
+        "skill connection",
+        "Reconnect a Git skill using your access",
+    ),
     ("repo.list", "mission", "List tracked branches"),
     ("repo.status", "mission", "Inspect hosted checkout state"),
     (
         "repo.add",
-        "mission name remote branch",
+        "mission name remote branch connection confirm",
         "Track a Git branch",
     ),
     ("repo.remove", "mission name", "Remove a branch binding"),
@@ -209,7 +253,7 @@ const OPS: &[(&str, &str, &str)] = &[
     ),
     (
         "skill.import",
-        "name remote ref path private",
+        "name remote ref path private connection",
         "Continuously import a skill from a Git remote on the server",
     ),
     (
@@ -264,7 +308,7 @@ const OPS: &[(&str, &str, &str)] = &[
     ("pull", "thread output", "Export Markdown messages as YAML"),
     (
         "post",
-        "thread body mentions refs confirm key",
+        "thread body mentions refs confirm key silent",
         "Post a message and optionally dispatch agents",
     ),
     (
@@ -345,6 +389,9 @@ fn cli() -> Command {
                 k => k,
             });
             if [
+                "silent",
+                "preview",
+                "token-stdin",
                 "handover",
                 "confirm",
                 "fork",
@@ -403,6 +450,9 @@ pub fn main() -> Result<()> {
     let mut d = json!({});
     for key in keys.split_whitespace() {
         if [
+            "silent",
+            "preview",
+            "token-stdin",
             "handover",
             "confirm",
             "fork",
@@ -446,6 +496,14 @@ pub fn main() -> Result<()> {
         } else {
             std::fs::read_to_string(file)?
         });
+    }
+    if matches!(op.as_str(), "connection.create" | "connection.update") {
+        d["token"] = json!(if d["token-stdin"] == true {
+            stdin()?.trim_end().to_owned()
+        } else {
+            secret_input("Git access token")?
+        });
+        d.as_object_mut().unwrap().remove("token-stdin");
     }
     if op == "hooks.capture" {
         return hooks::capture(field(&d, "adapter")?);

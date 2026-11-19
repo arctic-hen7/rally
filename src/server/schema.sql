@@ -152,3 +152,32 @@ CREATE TABLE IF NOT EXISTS scoped_secrets (
     target text NOT NULL, name text NOT NULL, ciphertext bytea NOT NULL, checksum text NOT NULL,
     PRIMARY KEY(target,name)
 );
+
+ALTER TABLE messages ADD COLUMN IF NOT EXISTS silent boolean NOT NULL DEFAULT false;
+
+CREATE TABLE IF NOT EXISTS git_connections (
+    id text PRIMARY KEY, owner_id text NOT NULL REFERENCES people, name text NOT NULL,
+    origin text NOT NULL, username text NOT NULL, ciphertext bytea NOT NULL, UNIQUE(owner_id,name)
+);
+ALTER TABLE repos ADD COLUMN IF NOT EXISTS contributor text REFERENCES people,
+    ADD COLUMN IF NOT EXISTS connection text REFERENCES git_connections,
+    ADD COLUMN IF NOT EXISTS needs_transfer boolean NOT NULL DEFAULT true;
+ALTER TABLE skills ADD COLUMN IF NOT EXISTS git_owner text REFERENCES people,
+    ADD COLUMN IF NOT EXISTS connection text REFERENCES git_connections,
+    ADD COLUMN IF NOT EXISTS git_paused boolean NOT NULL DEFAULT false,
+    ADD COLUMN IF NOT EXISTS last_fetch timestamptz;
+CREATE OR REPLACE VIEW repo_details AS
+    SELECT r.*,p.name AS contributor_name FROM repos r LEFT JOIN people p ON p.id=r.contributor;
+
+CREATE OR REPLACE FUNCTION suspend_repo_access() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    UPDATE repos SET needs_transfer=true,connection=NULL
+    WHERE NOT needs_transfer AND contributor IS NOT NULL AND NOT can_read(contributor,mission);
+    RETURN NULL;
+END $$;
+CREATE OR REPLACE TRIGGER repo_member_loss AFTER DELETE ON members
+    FOR EACH STATEMENT EXECUTE FUNCTION suspend_repo_access();
+CREATE OR REPLACE TRIGGER repo_group_loss AFTER DELETE ON group_members
+    FOR EACH STATEMENT EXECUTE FUNCTION suspend_repo_access();
+CREATE OR REPLACE TRIGGER repo_admin_loss AFTER UPDATE OF admin,owner ON people
+    FOR EACH STATEMENT EXECUTE FUNCTION suspend_repo_access();

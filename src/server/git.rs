@@ -1,6 +1,6 @@
 use super::engine;
 use super::*;
-use rally_teams::{remote, slug};
+use rally_teams::slug;
 use std::path::Path;
 
 pub fn workspace(app: &App, mid: &str) -> PathBuf {
@@ -29,7 +29,8 @@ async fn command(app: &App, root: &Path, repo: Option<&str>, args: &[&str]) -> R
         .and_then(|s| s.to_str())
         .ok_or_else(|| anyhow::anyhow!("Missing mission directory"))?;
     let mut env = super::secrets::environment(app, mid, None).await?;
-    env.push(("GIT_TERMINAL_PROMPT".into(), "0".into()));
+    let lease = connections::Lease::new(app, connections::Scope::Mission(mid.into()));
+    env.extend(lease.env());
     engine::output(engine::command(app, root, None, &env, None, "git", &cmd)?).await
 }
 
@@ -55,6 +56,15 @@ async fn reconcile(app: &App, r: &Value, idle: bool) -> Result<Value> {
     let name = field(r, "name")?;
     let branch = field(r, "branch")?;
     let remote_name = field(r, "remote")?;
+    if r["needs_transfer"] == true {
+        let mut status = r["status"].clone();
+        status["state"] = json!("needs transfer");
+        return Ok(status);
+    }
+    let proxy = format!(
+        "{}/git/{mid}/{name}",
+        var("RALLY_WORKER_URL", &app.base).trim_end_matches('/')
+    );
     tokio::fs::create_dir_all(&root).await?;
     let run = |args: Vec<String>| {
         let root = root.clone();
@@ -69,7 +79,14 @@ async fn reconcile(app: &App, r: &Value, idle: bool) -> Result<Value> {
             app,
             &root,
             None,
-            &["clone", "--branch", base, "--", remote_name, name],
+            &["clone", "--branch", base, "--", &proxy, name],
+        )
+        .await?;
+        command(
+            app,
+            &root,
+            Some(name),
+            &["config", "rally.upstream", remote_name],
         )
         .await?;
         if base != branch {
@@ -84,7 +101,31 @@ async fn reconcile(app: &App, r: &Value, idle: bool) -> Result<Value> {
         &["config", "--get", "remote.origin.url"],
     )
     .await?;
-    if configured != remote_name {
+    if configured == remote_name {
+        command(
+            app,
+            &root,
+            Some(name),
+            &["remote", "set-url", "origin", &proxy],
+        )
+        .await?;
+        command(
+            app,
+            &root,
+            Some(name),
+            &["config", "rally.upstream", remote_name],
+        )
+        .await?;
+    } else if configured != proxy
+        || command(
+            app,
+            &root,
+            Some(name),
+            &["config", "--get", "rally.upstream"],
+        )
+        .await?
+            != remote_name
+    {
         bail!(
             "Existing checkout has a different origin. Choose a new checkout name or move the old checkout before refreshing"
         );
@@ -188,7 +229,7 @@ pub async fn sync_before_run(app: &App, mid: &str, rid: &str) -> Result<Value> {
     let idle:bool=sqlx::query_scalar("SELECT NOT EXISTS(SELECT 1 FROM runs r JOIN sessions s ON s.id=r.session JOIN threads t ON t.id=s.thread WHERE t.mission=$1 AND r.id!=$2 AND r.status IN ('working','stopping'))").bind(mid).bind(rid).fetch_one(&app.db).await?;
     let repos = rows(
         &app.db,
-        "SELECT to_jsonb(r) FROM repos r WHERE mission=$1 ORDER BY name",
+        "SELECT to_jsonb(r) FROM repo_details r WHERE mission=$1 ORDER BY name",
         &[mid],
     )
     .await?;
@@ -212,10 +253,48 @@ pub async fn sync_before_run(app: &App, mid: &str, rid: &str) -> Result<Value> {
     }
     rows(
         &app.db,
-        "SELECT to_jsonb(r) FROM repos r WHERE mission=$1 ORDER BY name",
+        "SELECT to_jsonb(r) FROM repo_details r WHERE mission=$1 ORDER BY name",
         &[mid],
     )
     .await
+}
+
+pub async fn verify_binding(
+    app: &App,
+    a: &Actor,
+    binding: &Value,
+    base: &str,
+    cid: Option<&str>,
+    confirm: bool,
+) -> Result<Option<String>> {
+    let branch = field(binding, "branch")?;
+    let remote = field(binding, "remote")?;
+    slug(field(binding, "name")?)?;
+    let cid = connections::selected(app, a, remote, cid).await?;
+    if cid.is_some() && !confirm {
+        bail!(
+            "Confirm that all present and future mission members and hosted agents may use your Git connection for this repository"
+        );
+    }
+    if branch.starts_with('-')
+        || !tokio::process::Command::new("git")
+            .args(["check-ref-format", "--branch", branch])
+            .output()
+            .await?
+            .status
+            .success()
+    {
+        bail!("Invalid branch");
+    }
+    connections::probe(
+        app,
+        &a.uid,
+        remote,
+        cid.as_deref(),
+        &format!("refs/heads/{base}"),
+    )
+    .await?;
+    Ok(cid)
 }
 
 pub async fn call(app: &App, a: &Actor, op: &str, d: &Value) -> Result<Value> {
@@ -224,45 +303,79 @@ pub async fn call(app: &App, a: &Actor, op: &str, d: &Value) -> Result<Value> {
     if op == "repo.list" {
         return rows(
             &app.db,
-            "SELECT to_jsonb(r) FROM repos r WHERE mission=$1 ORDER BY name",
+            "SELECT to_jsonb(r) FROM repo_details r WHERE mission=$1 ORDER BY name",
             &[&mid],
         )
         .await;
     }
     personal(a)?;
     match op {
-        "repo.add" => {
+        "repo.add" | "repo.takeover" => {
             let name = slug(field(d, "name")?)?;
-            let branch = field(d, "branch")?;
-            if branch.starts_with('-')
-                || !tokio::process::Command::new("git")
-                    .args(["check-ref-format", "--branch", branch])
-                    .output()
-                    .await?
-                    .status
-                    .success()
-            {
-                bail!("Invalid branch");
-            }
             let _guard = app.git_lock.lock().await;
-            if root.join(name).exists()
-                && command(
+            let binding = if op == "repo.takeover" {
+                one(
+                    &app.db,
+                    "SELECT to_jsonb(r) FROM repos r WHERE mission=$1 AND name=$2",
+                    &[&mid, name],
+                )
+                .await?
+            } else {
+                d.clone()
+            };
+            let (remote, branch) = (field(&binding, "remote")?, field(&binding, "branch")?);
+            let cid = d["connection"].as_str().filter(|v| !v.is_empty());
+            let base = binding["status"]["fork_from"].as_str().unwrap_or(branch);
+            let cid = verify_binding(app, a, &binding, base, cid, d["confirm"] == true).await?;
+            if op == "repo.add" && root.join(name).exists() {
+                let saved = command(
                     app,
                     &root,
                     Some(name),
-                    &["config", "--get", "remote.origin.url"],
+                    &["config", "--get", "rally.upstream"],
                 )
-                .await?
-                    != field(d, "remote")?
-            {
-                bail!("Existing checkout has a different origin. Choose a new checkout name");
+                .await;
+                let upstream = match saved {
+                    Ok(url) => url,
+                    Err(_) => {
+                        command(
+                            app,
+                            &root,
+                            Some(name),
+                            &["config", "--get", "remote.origin.url"],
+                        )
+                        .await?
+                    }
+                };
+                if upstream != remote {
+                    bail!("Existing checkout has a different origin. Choose a new checkout name");
+                }
             }
-            execute(
-                &app.db,
-                "INSERT INTO repos(mission,name,remote,branch) VALUES($1,$2,$3,$4)",
-                &[&mid, name, remote(field(d, "remote")?)?, branch],
-            )
-            .await?;
+            let mut tx = app.db.begin().await?;
+            sqlx::query("LOCK TABLE members,group_members,people IN SHARE MODE")
+                .execute(&mut *tx)
+                .await?;
+            if !sqlx::query_scalar::<_, bool>("SELECT can_read($1,$2)")
+                .bind(&a.uid)
+                .bind(&mid)
+                .fetch_one(&mut *tx)
+                .await?
+            {
+                bail!("Access denied");
+            }
+            if op == "repo.add" {
+                sqlx::query("INSERT INTO repos(mission,name,remote,branch,contributor,connection,needs_transfer) VALUES($1,$2,$3,$4,$5,$6,false)").bind(&mid).bind(name).bind(remote).bind(branch).bind(&a.uid).bind(cid).execute(&mut *tx).await?;
+            } else {
+                sqlx::query("UPDATE repos SET contributor=$3,connection=$4,needs_transfer=false WHERE mission=$1 AND name=$2").bind(&mid).bind(name).bind(&a.uid).bind(cid).execute(&mut *tx).await?;
+            }
+            tx.commit().await?;
+        }
+        "repo.withdraw" => {
+            let changed=sqlx::query("UPDATE repos SET needs_transfer=true,connection=NULL WHERE mission=$1 AND name=$2 AND contributor=$3")
+                .bind(&mid).bind(field(d,"name")?).bind(&a.uid).execute(&app.db).await?;
+            if changed.rows_affected() != 1 {
+                bail!("Access denied");
+            }
         }
         "repo.remove" => {
             let _guard = app.git_lock.lock().await;
@@ -282,6 +395,9 @@ pub async fn call(app: &App, a: &Actor, op: &str, d: &Value) -> Result<Value> {
                 &[&mid, name],
             )
             .await?;
+            if r["needs_transfer"] == true && (op == "repo.return" || d["fork"] == true) {
+                bail!("Take over Git access before changing remote branches");
+            }
             if op == "repo.return" {
                 if r["recovery"].is_null() {
                     bail!("No recovery branch");
@@ -346,7 +462,7 @@ pub async fn call(app: &App, a: &Actor, op: &str, d: &Value) -> Result<Value> {
                     )
                     .await?;
                     let diff = diff.chars().take(16000).collect::<String>();
-                    let history=rows(&app.db,"SELECT to_jsonb(left(body,2048)) FROM messages WHERE thread=COALESCE(NULLIF($2,''),(SELECT id FROM threads WHERE mission=$1 AND kind='main')) AND thread IN(SELECT id FROM threads WHERE mission=$1) ORDER BY id DESC LIMIT 8",&[&mid,opt(d,"thread")]).await?;
+                    let history=rows(&app.db,"SELECT to_jsonb(left(body,2048)) FROM messages WHERE thread=COALESCE(NULLIF($2,''),(SELECT id FROM threads WHERE mission=$1 AND kind='main')) AND NOT silent AND thread IN(SELECT id FROM threads WHERE mission=$1) ORDER BY id DESC LIMIT 8",&[&mid,opt(d,"thread")]).await?;
                     let prompt = format!(
                         "Write only one concise Git WIP commit subject. Files: {paths}\nDiff: {diff}\nRecent conversation: {history}"
                     );

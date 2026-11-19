@@ -190,6 +190,8 @@ async fn drive(app: &App, rid: &str, token: &str, resuming: bool) -> Result<()> 
     let mut env = environment()?;
     env.extend(super::secrets::environment(app, mid, Some(field(&r, "agent")?)).await?);
     env.extend(lease.env.clone());
+    let git = connections::Lease::new(app, connections::Scope::Mission(mid.into()));
+    env.extend(git.env());
     env.extend([
         ("RALLY_URL".into(), var("RALLY_WORKER_URL", &app.base)),
         ("RALLY_TOKEN".into(), token.into()),
@@ -400,7 +402,7 @@ async fn conversation(
         .bind(trigger)
         .fetch_one(&app.db)
         .await?;
-    let unseen=sqlx::query("SELECT m.id,m.author,m.body FROM messages m JOIN sessions s ON s.thread=m.thread WHERE s.id=$1 AND m.id<$2 AND NOT(m.id=ANY(s.delivered)) ORDER BY m.id").bind(session).bind(trigger).fetch_all(&app.db).await?;
+    let unseen=sqlx::query("SELECT m.id,m.author,m.body FROM messages m JOIN sessions s ON s.thread=m.thread WHERE s.id=$1 AND NOT m.silent AND m.id<$2 AND NOT(m.id=ANY(s.delivered)) ORDER BY m.id").bind(session).bind(trigger).fetch_all(&app.db).await?;
     let mut history = String::new();
     let mut delivered = vec![trigger];
     for m in unseen {

@@ -150,63 +150,75 @@ pub fn open(c: &Client, mid: &str) -> Result<PathBuf> {
     attach(&root)?;
     for r in m["repos"].as_array().unwrap() {
         let name = slug(field(r, "name")?)?;
-        let branch = r["recovery"].as_str().unwrap_or(field(r, "branch")?);
-        let repo = root.join(name);
-        if !repo.exists() {
-            git(
-                &root,
-                &["clone", "--branch", branch, "--", field(r, "remote")?, name],
-            )?;
-        } else {
-            if git(&repo, &["config", "--get", "remote.origin.url"])? != field(r, "remote")? {
-                bail!("{name} has a different remote");
-            }
-            git(&repo, &["fetch", "--prune", "origin"])?;
-            let local = git(&repo, &["branch", "--show-current"])?;
-            if git(&repo, &["status", "--porcelain"])?.is_empty() {
-                if local != branch {
-                    if git(
-                        &repo,
-                        &[
-                            "merge-base",
-                            "--is-ancestor",
-                            "HEAD",
-                            &format!("origin/{branch}"),
-                        ],
-                    )
-                    .is_ok()
+        let checkout = || -> Result<()> {
+            let branch = r["recovery"].as_str().unwrap_or(field(r, "branch")?);
+            let repo = root.join(name);
+            if !repo.exists() {
+                git(
+                    &root,
+                    &["clone", "--branch", branch, "--", field(r, "remote")?, name],
+                )?;
+            } else {
+                if git(&repo, &["config", "--get", "remote.origin.url"])? != field(r, "remote")? {
+                    bail!("{name} has a different remote");
+                }
+                git(&repo, &["fetch", "--prune", "origin"])?;
+                let local = git(&repo, &["branch", "--show-current"])?;
+                if git(&repo, &["status", "--porcelain"])?.is_empty() {
+                    if local != branch {
+                        if git(
+                            &repo,
+                            &[
+                                "merge-base",
+                                "--is-ancestor",
+                                "HEAD",
+                                &format!("origin/{branch}"),
+                            ],
+                        )
+                        .is_ok()
+                        {
+                            git(&repo, &["switch", branch])?;
+                        } else {
+                            eprintln!(
+                                "{name}: local branch {local} has independent work; checkout preserved"
+                            );
+                        }
+                    }
+                    if git(&repo, &["branch", "--show-current"])? == branch
+                        && let Err(e) =
+                            git(&repo, &["merge", "--ff-only", &format!("origin/{branch}")])
                     {
-                        git(&repo, &["switch", branch])?;
-                    } else {
-                        eprintln!(
-                            "{name}: local branch {local} has independent work; checkout preserved"
-                        );
+                        eprintln!("{name}: {e}");
+                    }
+                } else {
+                    eprintln!("{name}: local changes preserved");
+                }
+            }
+            attach(&repo)?;
+            let exclude = git(&repo, &["rev-parse", "--git-path", "info/exclude"])?;
+            let p = repo.join(exclude);
+            let mut text = fs::read_to_string(&p).unwrap_or_default();
+            for name in files.as_object().unwrap().keys() {
+                for harness in [".agents", ".claude"] {
+                    let line = format!("/{harness}/skills/{name}");
+                    if !text.lines().any(|l| l == line) {
+                        text.push('\n');
+                        text += &line;
+                        text.push('\n');
                     }
                 }
-                if git(&repo, &["branch", "--show-current"])? == branch
-                    && let Err(e) = git(&repo, &["merge", "--ff-only", &format!("origin/{branch}")])
-                {
-                    eprintln!("{name}: {e}");
-                }
-            } else {
-                eprintln!("{name}: local changes preserved");
             }
+            fs::write(p, text)?;
+            Ok(())
+        };
+        if let Err(error) = checkout() {
+            let added_by = r["contributor_name"]
+                .as_str()
+                .unwrap_or("a previous mission member");
+            eprintln!(
+                "Warning: could not update {name} (contributed by {added_by}) using your local Git access: {error}"
+            );
         }
-        attach(&repo)?;
-        let exclude = git(&repo, &["rev-parse", "--git-path", "info/exclude"])?;
-        let p = repo.join(exclude);
-        let mut text = fs::read_to_string(&p).unwrap_or_default();
-        for name in files.as_object().unwrap().keys() {
-            for harness in [".agents", ".claude"] {
-                let line = format!("/{harness}/skills/{name}");
-                if !text.lines().any(|l| l == line) {
-                    text.push('\n');
-                    text += &line;
-                    text.push('\n');
-                }
-            }
-        }
-        fs::write(p, text)?;
     }
     write_json(
         &root.join(".rally/repos.json"),

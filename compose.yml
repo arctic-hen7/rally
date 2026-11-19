@@ -36,6 +36,7 @@ services:
             RALLY_BUILD_DIR: /opt/rally/runtime
             RALLY_RUNTIME_IMAGE: ${RALLY_RUNTIME_IMAGE:-localhost/rally-runtime:local}
             RALLY_RUNTIME_MOUNTS: ${RALLY_RUNTIME_MOUNTS:-[]}
+            RALLY_GIT_CA_FILE: ${RALLY_GIT_CA_FILE:-}
             RALLY_RUNTIME_ENV: ${RALLY_RUNTIME_ENV:-{}}
             RALLY_ADAPTER: ${RALLY_ADAPTER:-codex}
             RALLY_BYPASS_AUTH: ${RALLY_BYPASS_AUTH:-false}

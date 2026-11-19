@@ -5,7 +5,7 @@ pub async fn index(app: &App) -> Result<()> {
     let Some(model) = &app.model else {
         return Ok(());
     };
-    let pending=sqlx::query("SELECT m.id,(SELECT string_agg(body,E'\\n' ORDER BY id) FROM (SELECT body,id FROM messages WHERE thread=m.thread AND id<=m.id ORDER BY id DESC LIMIT 3) passage) AS passage FROM messages m WHERE embedding IS NULL ORDER BY id LIMIT 64").fetch_all(&app.db).await?;
+    let pending=sqlx::query("SELECT m.id,(SELECT string_agg(body,E'\\n' ORDER BY id) FROM (SELECT body,id FROM messages WHERE thread=m.thread AND NOT silent AND id<=m.id ORDER BY id DESC LIMIT 3) passage) AS passage FROM messages m WHERE NOT silent AND embedding IS NULL ORDER BY id LIMIT 64").fetch_all(&app.db).await?;
     if pending.is_empty() {
         return Ok(());
     }
@@ -50,7 +50,7 @@ pub async fn query(app: &App, a: &Actor, d: &Value) -> Result<Value> {
     } else {
         vec![]
     };
-    let query = "SELECT m.id,ts_rank_cd(to_tsvector('english',m.body),websearch_to_tsquery('english',$1)) AS rank FROM messages m JOIN threads t ON t.id=m.thread JOIN missions x ON x.id=t.mission WHERE (t.mission=ANY($2) OR t.id=ANY($3)) AND ($4='' OR t.mission=$4) AND (to_tsvector('english',m.body||' '||x.title||' '||t.title) @@ websearch_to_tsquery('english',$1) OR strpos(lower(m.body),lower($1))>0) ORDER BY rank DESC,m.id DESC LIMIT 200";
+    let query = "SELECT m.id,ts_rank_cd(to_tsvector('english',m.body),websearch_to_tsquery('english',$1)) AS rank FROM messages m JOIN threads t ON t.id=m.thread JOIN missions x ON x.id=t.mission WHERE NOT m.silent AND (t.mission=ANY($2) OR t.id=ANY($3)) AND ($4='' OR t.mission=$4) AND (to_tsvector('english',m.body||' '||x.title||' '||t.title) @@ websearch_to_tsquery('english',$1) OR strpos(lower(m.body),lower($1))>0) ORDER BY rank DESC,m.id DESC LIMIT 200";
     let lexical = sqlx::query(query)
         .bind(term)
         .bind(&scope)
@@ -64,7 +64,7 @@ pub async fn query(app: &App, a: &Actor, d: &Value) -> Result<Value> {
     }
     if let Some(model) = &app.model {
         let v = model.encode_single(term);
-        let hits=sqlx::query("SELECT m.id,m.embedding FROM messages m JOIN threads t ON t.id=m.thread WHERE (t.mission=ANY($1) OR t.id=ANY($2)) AND ($3='' OR t.mission=$3) AND m.embedding IS NOT NULL").bind(&scope).bind(&extra).bind(filter).fetch_all(&app.db).await?;
+        let hits=sqlx::query("SELECT m.id,m.embedding FROM messages m JOIN threads t ON t.id=m.thread WHERE NOT m.silent AND (t.mission=ANY($1) OR t.id=ANY($2)) AND ($3='' OR t.mission=$3) AND m.embedding IS NOT NULL").bind(&scope).bind(&extra).bind(filter).fetch_all(&app.db).await?;
         let mut similarity = hits
             .iter()
             .map(|row| {

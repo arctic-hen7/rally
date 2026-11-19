@@ -11,12 +11,25 @@ fn directory(value: Option<&str>) -> Result<&str> {
     }
     Ok(p)
 }
-fn validate_repos(repos: &Value) -> Result<()> {
+async fn validate_repos(app: &App, owner: &str, repos: &Value) -> Result<()> {
+    let mut names = std::collections::HashSet::new();
     for r in repos
         .as_array()
         .ok_or_else(|| anyhow::anyhow!("Repos must be an array"))?
     {
-        slug(field(r, "name")?)?;
+        if !names.insert(slug(field(r, "name")?)?) {
+            bail!("Checkout names must be unique");
+        }
+        if r["needs_connection"] == true {
+            bail!("Reconnect the transferred repository or explicitly select anonymous access");
+        }
+        connections::validate(
+            app,
+            owner,
+            field(r, "remote")?,
+            r["connection"].as_str().filter(|s| !s.is_empty()),
+        )
+        .await?;
         remote(field(r, "remote")?)?;
         if field(r, "branch")?.starts_with('-') {
             bail!("Invalid branch");
@@ -27,6 +40,9 @@ fn validate_repos(repos: &Value) -> Result<()> {
 
 pub async fn call(app: &App, a: &Actor, op: &str, d: &Value) -> Result<Value> {
     personal(a)?;
+    if a.routine.is_some() && matches!(op, "routine.create" | "routine.update") {
+        bail!("Manage routine workspaces with a user or service account");
+    }
     if op == "routine.preview" {
         return Ok(json!(triggers::upcoming(
             field(d, "cron")?,
@@ -49,7 +65,7 @@ pub async fn call(app: &App, a: &Actor, op: &str, d: &Value) -> Result<Value> {
     };
     if op == "routine.create" {
         let repos = d.get("repos").cloned().unwrap_or(json!([]));
-        validate_repos(&repos)?;
+        validate_repos(app, &a.uid, &repos).await?;
         sqlx::query("INSERT INTO routines(id,name,owner_id,command,repos,directory) VALUES($1,$2,$3,$4,$5,$6)").bind(&rid).bind(field(d,"name")?).bind(&a.uid).bind(field(d,"command")?).bind(repos).bind(directory(d["directory"].as_str())?).execute(&mut *tx).await?;
     }
     let mut r: Value =
@@ -102,6 +118,24 @@ pub async fn call(app: &App, a: &Actor, op: &str, d: &Value) -> Result<Value> {
                     .await?;
             }
         }
+        let mut repos = r["repos"].clone();
+        let mut pause = false;
+        for repo in repos.as_array_mut().unwrap() {
+            if repo["connection"].as_str().is_some_and(|s| !s.is_empty())
+                || repo["needs_connection"] == true
+            {
+                repo.as_object_mut().unwrap().remove("connection");
+                repo["needs_connection"] = json!(true);
+                pause = true;
+            }
+        }
+        sqlx::query("UPDATE routines SET repos=$2,enabled=enabled AND NOT $3 WHERE id=$1")
+            .bind(&rid)
+            .bind(repos)
+            .bind(pause)
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query("UPDATE jobs SET status='aborted',token_digest=NULL WHERE routine=$1 AND status='queued'").bind(&rid).execute(&mut *tx).await?;
         sqlx::query("UPDATE routines SET owner_id=$2 WHERE id=$1")
             .bind(&rid)
             .bind(recipient)
@@ -133,7 +167,7 @@ pub async fn call(app: &App, a: &Actor, op: &str, d: &Value) -> Result<Value> {
                 }
                 if op == "routine.update" {
                     let repos = d.get("repos").unwrap_or(&r["repos"]);
-                    validate_repos(repos)?;
+                    validate_repos(app, &a.uid, repos).await?;
                     sqlx::query("UPDATE routines SET name=coalesce($2,name),command=coalesce($3,command),repos=$4,directory=$5 WHERE id=$1").bind(&rid).bind(d["name"].as_str()).bind(d["command"].as_str()).bind(repos).bind(directory(d["directory"].as_str().or(r["directory"].as_str()))?).execute(&mut *tx).await?;
                 }
             }
@@ -143,6 +177,9 @@ pub async fn call(app: &App, a: &Actor, op: &str, d: &Value) -> Result<Value> {
                 return Ok(json!({"id":job}));
             }
             "routine.enable" | "routine.disable" => {
+                if op == "routine.enable" {
+                    validate_repos(app, &a.uid, &r["repos"]).await?;
+                }
                 sqlx::query("UPDATE routines SET enabled=$2 WHERE id=$1")
                     .bind(&rid)
                     .bind(op == "routine.enable")
@@ -252,15 +289,18 @@ async fn run(app: &App, jid: &str, token: &str) -> Result<(&'static str, String)
             },
         ),
     ]);
+    let access = connections::Lease::new(app, connections::Scope::Job(jid.into()));
+    env.extend(access.env());
     let name = format!("rally-{jid}");
     let mut shutdown = app.shutdown.clone();
     for repo in r["repos"].as_array().into_iter().flatten() {
+        let origin = access.url(field(repo, "name")?);
         let args = [
             "clone",
             "--branch",
             field(repo, "branch")?,
             "--",
-            field(repo, "remote")?,
+            &origin,
             field(repo, "name")?,
         ];
         let clone = engine::command(app, &root, None, &env, Some(&name), "git", &args)?;

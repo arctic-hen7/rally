@@ -19,7 +19,7 @@ pub fn load_key(root: &Path, has_secrets: bool) -> Result<LessSafeKey> {
         .map_err(|_| anyhow::anyhow!("Invalid installation secret key"))?;
     Ok(LessSafeKey::new(key))
 }
-fn encrypt(app: &App, target: &str, key: &str, value: &str) -> Result<Vec<u8>> {
+pub(super) fn encrypt(app: &App, target: &str, key: &str, value: &str) -> Result<Vec<u8>> {
     let mut nonce = [0; 12];
     rand::rngs::OsRng.fill_bytes(&mut nonce);
     let mut ciphertext = value.as_bytes().to_vec();
@@ -34,7 +34,7 @@ fn encrypt(app: &App, target: &str, key: &str, value: &str) -> Result<Vec<u8>> {
     out.extend(ciphertext);
     Ok(out)
 }
-fn decrypt(app: &App, target: &str, key: &str, buf: &mut [u8]) -> Result<String> {
+pub(super) fn decrypt(app: &App, target: &str, key: &str, buf: &mut [u8]) -> Result<String> {
     let (nonce, value) = buf
         .split_at_mut_checked(12)
         .context("Damaged encrypted secret")?;

@@ -2,6 +2,7 @@ mod access;
 mod auth;
 mod catalog;
 mod chat;
+mod connections;
 mod engine;
 mod git;
 mod notify;
@@ -38,7 +39,10 @@ pub struct App {
     base: String,
     events: broadcast::Sender<String>,
     shutdown: watch::Receiver<bool>,
+    git_http: reqwest::Client,
+    git_grants: connections::Grants,
     git_lock: Arc<Mutex<()>>,
+    skill_lock: Arc<Mutex<()>>,
     model: Option<model2vec_rs::model::StaticModel>,
 }
 
@@ -50,6 +54,7 @@ pub struct Actor {
     admin: bool,
     run: Option<String>,
     routine: Option<String>,
+    job: Option<String>,
 }
 
 pub struct Error(anyhow::Error);
@@ -190,6 +195,7 @@ async fn rpc(
 ) -> ApiResult {
     let a = auth::actor(&app, &headers).await?;
     let result = match op.as_str() {
+        s if s.starts_with("connection.") => connections::call(&app, &a, s, &data).await?,
         "models.settings" => {
             admin(&a)?;
             if data.get("model").is_some() {
@@ -290,9 +296,11 @@ pub async fn serve(provider: Arc<provider::Provider>) -> Result<()> {
         .ok()
         .map(|dir| model2vec_rs::model::StaticModel::from_pretrained(dir, None, Some(true), None))
         .transpose()?;
-    let has_secrets: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM scoped_secrets)")
-        .fetch_one(&db)
-        .await?;
+    let has_secrets: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM scoped_secrets UNION ALL SELECT 1 FROM git_connections)",
+    )
+    .fetch_one(&db)
+    .await?;
     provider::write_private(
         &root.join("codex/runtime-config.toml"),
         provider.config.as_bytes(),
@@ -308,7 +316,10 @@ pub async fn serve(provider: Arc<provider::Provider>) -> Result<()> {
             .to_string(),
         events: broadcast::channel(512).0,
         shutdown,
+        git_grants: Default::default(),
+        git_http: connections::client()?,
         git_lock: Default::default(),
+        skill_lock: Default::default(),
         model,
     };
     let assets = PathBuf::from(var("RALLY_WEB_DIR", "web/dist"));
@@ -319,6 +330,10 @@ pub async fn serve(provider: Arc<provider::Provider>) -> Result<()> {
         .route("/auth/oidc/callback", get(auth::oidc_callback))
         .route("/api/{op}", post(rpc))
         .route("/internal/codex/refresh", post(provider::refresh))
+        .route(
+            "/git/{scope}/{name}/{*operation}",
+            get(connections::proxy).post(connections::proxy),
+        )
         .route("/events", get(live))
         .route("/hooks/{id}", post(triggers::webhook))
         .fallback_service(

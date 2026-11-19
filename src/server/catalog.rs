@@ -3,6 +3,9 @@ use rally_teams::{digest, secret, slug};
 
 pub async fn call(app: &App, a: &Actor, op: &str, d: &Value) -> Result<Value> {
     let db = &app.db;
+    if matches!(op, "member.remove" | "group.remove" | "account.role") {
+        return change_membership(app, a, op, d).await;
+    }
     match op {
         "topic.list"=>rows(db,"SELECT jsonb_build_object('slug',slug,'name',name) FROM topics ORDER BY name",&[]).await,
         "topic.create"=>{
@@ -15,6 +18,14 @@ pub async fn call(app: &App, a: &Actor, op: &str, d: &Value) -> Result<Value> {
             let from=if op=="mission.fork"{Some(mission(app,a,field(d,"mission")?,false).await?)}else{None};
             let topic=if let Some(mid)=&from {mid.rsplit_once('-').unwrap().0}else{field(d,"topic")?};
             let title=field(d,"title")?;
+            let repos=d["repos"].as_array();
+            if d.get("repos").is_some() && repos.is_none(){bail!("Expected a repository list");}
+            if from.is_some() && repos.is_some(){bail!("Take over forked repositories in the new mission");}
+            let mut verified=Vec::new();
+            for r in repos.into_iter().flatten(){
+                let cid=git::verify_binding(app,a,r,field(r,"branch")?,r["connection"].as_str().filter(|v|!v.is_empty()),d["confirm"]==true || r["confirm"]==true).await?;
+                verified.push((r,cid));
+            }
             let mut tx=db.begin().await?;
             let n:i32=sqlx::query_scalar("UPDATE topics SET seq=seq+1 WHERE slug=$1 RETURNING seq").bind(topic).fetch_optional(&mut *tx).await?.ok_or_else(||anyhow::anyhow!("Unknown topic"))?;
             let mid=format!("{topic}-{n}");
@@ -25,6 +36,9 @@ pub async fn call(app: &App, a: &Actor, op: &str, d: &Value) -> Result<Value> {
             sqlx::query("INSERT INTO participants VALUES($1,$2)").bind(&tid).bind(&a.uid).execute(&mut *tx).await?;
             if let Some(parent)=&from{
                 sqlx::query("INSERT INTO repos(mission,name,remote,branch,status) SELECT $1,name,remote,$2,jsonb_build_object('fork_from',branch) FROM repos WHERE mission=$3").bind(&mid).bind(&mid).bind(parent).execute(&mut *tx).await?;
+            }
+            for (r,cid) in verified{
+                sqlx::query("INSERT INTO repos(mission,name,remote,branch,contributor,connection,needs_transfer) VALUES($1,$2,$3,$4,$5,$6,false)").bind(&mid).bind(field(r,"name")?).bind(field(r,"remote")?).bind(field(r,"branch")?).bind(&a.uid).bind(cid).execute(&mut *tx).await?;
             }
             tx.commit().await?;Ok(json!({"id":mid,"thread":tid}))
         }
@@ -39,7 +53,7 @@ pub async fn call(app: &App, a: &Actor, op: &str, d: &Value) -> Result<Value> {
             if op!="mission.show"{personal(a)?;}
             if op=="mission.update" {sqlx::query("UPDATE missions SET title=COALESCE($2,title),description=COALESCE($3,description),status=COALESCE($4,status) WHERE id=$1").bind(&mid).bind(d["title"].as_str()).bind(d["description"].as_str()).bind(d["status"].as_str()).execute(db).await?;}
             let mut m=one(db,"SELECT to_jsonb(m) FROM missions m WHERE id=$1",&[&mid]).await?;
-            m["repos"]=rows(db,"SELECT to_jsonb(r) FROM repos r WHERE mission=$1 ORDER BY name",&[&mid]).await?;
+            m["repos"]=rows(db,"SELECT to_jsonb(r) FROM repo_details r WHERE mission=$1 ORDER BY name",&[&mid]).await?;
             m["threads"]=rows(db,"SELECT to_jsonb(t) FROM threads t WHERE mission=$1 ORDER BY (kind='main') DESC,created DESC",&[&mid]).await?;
             Ok(m)
         }
@@ -59,10 +73,10 @@ pub async fn call(app: &App, a: &Actor, op: &str, d: &Value) -> Result<Value> {
             let mid=mission(app,a,field(d,"mission")?,false).await?;
             rows(db,"SELECT jsonb_build_object('id',principal,'name',coalesce(p.name,g.name,a.name),'kind',coalesce(p.kind,CASE WHEN g.id IS NULL THEN 'agent' ELSE 'group' END)) FROM members m LEFT JOIN people p ON p.id=principal LEFT JOIN groups g ON g.id=principal LEFT JOIN agents a ON a.id=principal WHERE mission=$1 ORDER BY principal",&[&mid]).await
         }
-        "member.add"|"member.remove"=>{
+        "member.add"=>{
             personal(a)?;let mid=mission(app,a,field(d,"mission")?,true).await?;
             let pid=field(d,"principal")?;
-            if op=="member.add"{
+            {
                 let exists:bool=sqlx::query_scalar("SELECT EXISTS(SELECT id FROM people WHERE id=$1 UNION ALL SELECT id FROM groups WHERE id=$1 UNION ALL SELECT id FROM agents WHERE id=$1)").bind(pid).fetch_one(db).await?;
                 if !exists{bail!("Unknown principal");}
                 if pid.starts_with("a_"){
@@ -71,27 +85,16 @@ pub async fn call(app: &App, a: &Actor, op: &str, d: &Value) -> Result<Value> {
                     if private==Some(true) && d["confirm"]!=true{bail!("Confirm that mission members can use this private agent and any secrets the agent has");}
                 }
                 execute(db,"INSERT INTO members VALUES($1,$2) ON CONFLICT DO NOTHING",&[&mid,pid]).await?;
-            }else{execute(db,"DELETE FROM members WHERE mission=$1 AND principal=$2",&[&mid,pid]).await?;
-                let remaining:Vec<String>=sqlx::query_scalar("SELECT name FROM groups g JOIN group_members gm ON gm.group_id=g.id JOIN members m ON m.principal=g.id WHERE gm.person=$1 AND m.mission=$2 UNION ALL SELECT 'workspace administrator' FROM people WHERE id=$1 AND (owner OR admin)").bind(pid).bind(&mid).fetch_all(db).await?;
-                let retained=rows(db,"SELECT jsonb_build_object('name',p.name,'id',p.id) FROM group_members gm JOIN people p ON p.id=gm.person WHERE gm.group_id=$1 AND can_read(p.id,$2) ORDER BY p.name",&[pid,&mid]).await?;
-                return Ok(json!({"id":pid,"remaining":remaining,"retained":retained}));}
+            }
             Ok(json!({"id":pid}))
         }
         "status.list" | "status.create" | "status.update" | "status.remove" => status(db, a, op, d).await,
-        "account.role" => {
-            owner_access(a)?;
-            let person=field(d,"person")?;
-            field(d,"role")?;
-            let changed=sqlx::query("UPDATE people SET admin=$2 WHERE id=$1 AND NOT owner AND kind='user'").bind(person).bind(role(d)?).execute(db).await?;
-            if changed.rows_affected()!=1 {bail!("Choose a regular user account");}
-            Ok(json!({"id":person}))
-        }
         "group.list"=>rows(db,"SELECT to_jsonb(g)||jsonb_build_object('members',ARRAY(SELECT person FROM group_members WHERE group_id=g.id)) FROM groups g ORDER BY name",&[]).await,
         "group.create"=>{
             admin(a)?;let gid=id("g");execute(db,"INSERT INTO groups VALUES($1,$2)",&[&gid,field(d,"name")?]).await?;Ok(json!({"id":gid}))
         }
-        "group.add"|"group.remove"=>{
-            admin(a)?;let sql=if op=="group.add"{"INSERT INTO group_members VALUES($1,$2) ON CONFLICT DO NOTHING"}else{"DELETE FROM group_members WHERE group_id=$1 AND person=$2"};
+        "group.add"=>{
+            admin(a)?;let sql="INSERT INTO group_members VALUES($1,$2) ON CONFLICT DO NOTHING";
             execute(db,sql,&[field(d,"group")?,field(d,"person")?]).await?;Ok(json!({"ok":true}))
         }
         "account.invite"=>{
@@ -176,4 +179,73 @@ fn role(d: &Value) -> Result<bool> {
         "admin" => Ok(true),
         _ => bail!("Choose member or admin"),
     }
+}
+
+async fn change_membership(app: &App, a: &Actor, op: &str, d: &Value) -> Result<Value> {
+    personal(a)?;
+    let (mid, person) = match op {
+        "member.remove" => (
+            mission(app, a, field(d, "mission")?, true).await?,
+            field(d, "principal")?,
+        ),
+        "group.remove" => {
+            admin(a)?;
+            (String::new(), field(d, "person")?)
+        }
+        _ => {
+            owner_access(a)?;
+            (String::new(), field(d, "person")?)
+        }
+    };
+    let mut tx = app.db.begin().await?;
+    // Keep the preview and the membership mutation on a consistent set of repository grants
+    sqlx::query("LOCK TABLE members,group_members,people IN SHARE ROW EXCLUSIVE MODE")
+        .execute(&mut *tx)
+        .await?;
+    let candidates:Vec<(String,String)>=sqlx::query_as("SELECT mission,name FROM repos WHERE NOT needs_transfer AND ($1='' OR mission=$1) AND (contributor=$2 OR contributor IN (SELECT person FROM group_members WHERE group_id=$2)) ORDER BY mission,name FOR UPDATE")
+        .bind(&mid).bind(person).fetch_all(&mut *tx).await?;
+    match op {
+        "member.remove" => {
+            sqlx::query("DELETE FROM members WHERE mission=$1 AND principal=$2")
+                .bind(&mid)
+                .bind(person)
+                .execute(&mut *tx)
+                .await?;
+        }
+        "group.remove" => {
+            sqlx::query("DELETE FROM group_members WHERE group_id=$1 AND person=$2")
+                .bind(field(d, "group")?)
+                .bind(person)
+                .execute(&mut *tx)
+                .await?;
+        }
+        _ => {
+            field(d, "role")?;
+            let changed =
+                sqlx::query("UPDATE people SET admin=$2 WHERE id=$1 AND NOT owner AND kind='user'")
+                    .bind(person)
+                    .bind(role(d)?)
+                    .execute(&mut *tx)
+                    .await?;
+            if changed.rows_affected() != 1 {
+                bail!("Choose a regular user account");
+            }
+        }
+    }
+    let (missions, names): (Vec<_>, Vec<_>) = candidates.into_iter().unzip();
+    let affected:Vec<String>=sqlx::query_scalar("SELECT r.mission||' / '||r.name FROM repos r JOIN unnest($1::text[],$2::text[]) c(mission,name) USING(mission,name) WHERE r.needs_transfer ORDER BY r.mission,r.name").bind(missions).bind(names).fetch_all(&mut *tx).await?;
+    if d["preview"] == true {
+        tx.rollback().await?;
+        return Ok(json!({"affected":affected}));
+    }
+    if !affected.is_empty() && d["confirm"] != true {
+        bail!(
+            "These repositories will need transfer: {}. Confirm removal to pause their remote access.",
+            affected.join(", ")
+        );
+    }
+    let remaining:Vec<String>=sqlx::query_scalar("SELECT name FROM groups g JOIN group_members gm ON gm.group_id=g.id JOIN members m ON m.principal=g.id WHERE gm.person=$1 AND m.mission=$2 UNION ALL SELECT 'workspace administrator' FROM people WHERE id=$1 AND (owner OR admin)").bind(person).bind(&mid).fetch_all(&mut *tx).await?;
+    let retained:Vec<Value>=sqlx::query_scalar("SELECT jsonb_build_object('name',p.name,'id',p.id) FROM group_members gm JOIN people p ON p.id=gm.person WHERE gm.group_id=$1 AND can_read(p.id,$2) ORDER BY p.name").bind(person).bind(&mid).fetch_all(&mut *tx).await?;
+    tx.commit().await?;
+    Ok(json!({"id":person,"remaining":remaining,"retained":retained,"affected":affected}))
 }

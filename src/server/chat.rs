@@ -87,6 +87,13 @@ async fn post_hosted(
                 .await?;
         return Ok(json!({"id":old,"duplicate":true}));
     };
+    let silent = d["silent"] == true;
+    if silent {
+        sqlx::query("UPDATE messages SET silent=true WHERE id=$1")
+            .bind(msg)
+            .execute(&mut **tx)
+            .await?;
+    }
     sqlx::query("INSERT INTO participants VALUES($1,$2) ON CONFLICT DO NOTHING")
         .bind(tid)
         .bind(&actor)
@@ -127,7 +134,7 @@ async fn post_hosted(
             if !agents.contains(&pid) {
                 agents.push(pid);
             }
-        } else if pid != a.uid {
+        } else if pid != a.uid && !silent {
             notify(
                 tx,
                 &pid,
@@ -210,7 +217,9 @@ async fn post_hosted(
         };
         runs.push(rid);
     }
-    sqlx::query("INSERT INTO notifications(person,thread,message,reason,summary) SELECT person,$1,$2,'following',$3 FROM subscriptions WHERE thread=$1 AND mode='all' AND person!=$4 AND can_read(person,$5) AND NOT EXISTS(SELECT 1 FROM notifications n WHERE n.message=$2 AND n.person=subscriptions.person)").bind(tid).bind(msg).bind(format!("{} posted in {}",a.name,field(t,"title")?)).bind(&a.uid).bind(mid).execute(&mut **tx).await?;
+    if !silent {
+        sqlx::query("INSERT INTO notifications(person,thread,message,reason,summary) SELECT person,$1,$2,'following',$3 FROM subscriptions WHERE thread=$1 AND mode='all' AND person!=$4 AND can_read(person,$5) AND NOT EXISTS(SELECT 1 FROM notifications n WHERE n.message=$2 AND n.person=subscriptions.person)").bind(tid).bind(msg).bind(format!("{} posted in {}",a.name,field(t,"title")?)).bind(&a.uid).bind(mid).execute(&mut **tx).await?;
+    }
     Ok(json!({"id":msg,"runs":runs}))
 }
 
@@ -249,6 +258,12 @@ async fn steer_side(app: &App, a: &Actor, rid: &str, d: &Value) -> Result<Value>
     )
     .await?
     .unwrap();
+    if d["silent"] == true {
+        sqlx::query("UPDATE messages SET silent=true WHERE id=$1")
+            .bind(msg)
+            .execute(&mut *tx)
+            .await?;
+    }
     sqlx::query("UPDATE runs SET readers=ARRAY(SELECT DISTINCT unnest(readers || ARRAY[$2::text])),grants=grants||$3 WHERE id=$1").bind(rid).bind(&a.uid).bind(grants).execute(&mut *tx).await?;
     sqlx::query("INSERT INTO run_inputs(run,message,kind) VALUES($1,$2,'steer')")
         .bind(rid)
@@ -530,7 +545,7 @@ pub async fn call(app: &App, a: &Actor, op: &str, d: &Value) -> Result<Value> {
         "read" | "thread.show" => {
             let t = thread(app, a, d, false).await?;
             let tid = field(&t, "id")?;
-            let messages=rows(db,"SELECT to_jsonb(m)-'embedding'-'origin_key'-'native_reply' FROM messages m WHERE thread=$1 ORDER BY id",&[tid]).await?;
+            let messages=rows(db,"SELECT to_jsonb(m)-'embedding'-'origin_key'-'native_reply' FROM messages m WHERE thread=$1 AND NOT silent ORDER BY id",&[tid]).await?;
             let people=rows(db,"SELECT jsonb_build_object('id',principal,'name',coalesce(p.name,a.name,r.name)) FROM participants q LEFT JOIN people p ON p.id=principal LEFT JOIN agents a ON a.id=principal LEFT JOIN routines r ON r.id=principal WHERE thread=$1",&[tid]).await?;
             let runs=rows(db,"SELECT to_jsonb(v) FROM (SELECT r.id,r.trigger,r.status,r.updated,s.agent,a.name FROM runs r JOIN sessions s ON s.id=r.session JOIN agents a ON a.id=s.agent WHERE s.thread=$1 ORDER BY r.created DESC) v",&[tid]).await?;
             let mode: Option<String> =
@@ -563,7 +578,7 @@ pub async fn call(app: &App, a: &Actor, op: &str, d: &Value) -> Result<Value> {
             if op == "run.answer" {
                 answer_question(app, a, &r, d).await?;
             }
-            r["activity"]=rows(db,"SELECT jsonb_build_object('id',id,'author',author,'body',body,'source',source) FROM messages WHERE thread=$1 ORDER BY id",&[opt(&r,"working_thread")]).await?;
+            r["activity"]=rows(db,"SELECT jsonb_build_object('id',id,'author',author,'body',body,'source',source) FROM messages WHERE thread=$1 AND NOT silent ORDER BY id",&[opt(&r,"working_thread")]).await?;
             r["questions"] = rows(
                 db,
                 "SELECT to_jsonb(q)-'request' FROM questions q WHERE run=$1 ORDER BY id",
