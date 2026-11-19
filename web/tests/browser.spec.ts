@@ -134,20 +134,33 @@ test('installed service worker displays a background agent notification', async 
             });
         });
         await cdp.send('ServiceWorker.enable');
+        const registrationId = await registration;
+        // Observe delivery even when a headless host immediately dismisses the notification
+        const displayed: { tag: string; metadata: Record<string, string> }[] = [];
+        cdp.on('BackgroundService.backgroundServiceEventReceived', ({ backgroundServiceEvent: event }) => {
+            if (
+                event.eventName === 'Notification displayed' &&
+                event.serviceWorkerRegistrationId === registrationId
+            ) {
+                displayed.push({
+                    tag: event.instanceId,
+                    metadata: Object.fromEntries(event.eventMetadata.map(({ key, value }) => [key, value])),
+                });
+            }
+        });
+        await cdp.send('BackgroundService.startObserving', { service: 'notifications' });
+        await cdp.send('BackgroundService.setRecording', { service: 'notifications', shouldRecord: true });
         await cdp.send('ServiceWorker.deliverPushMessage', {
             origin,
-            registrationId: await registration,
+            registrationId,
             data: JSON.stringify({ title: 'Rally', body: 'Your agent has a question', thread: mission }),
         });
         await expect
-            .poll(() =>
-                page.evaluate(async () => {
-                    const reg = await navigator.serviceWorker.ready;
-                    const items = await reg.getNotifications();
-                    return items.map((n) => n.body);
-                }),
-            )
-            .toContain('Your agent has a question');
+            .poll(() => displayed)
+            .toContainEqual({
+                tag: mission,
+                metadata: expect.objectContaining({ Title: 'Rally', Body: 'Your agent has a question' }),
+            });
     } finally {
         await context.close();
     }
