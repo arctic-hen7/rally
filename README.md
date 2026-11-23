@@ -4,6 +4,12 @@ Rally is a self-hosted workspace for humans and agents. A mission groups a discr
 
 The Rust server stores mission state in PostgreSQL. The React PWA, Rust CLI, external session hooks, hosted agents, and scheduled or webhook-driven routines all use the same API.
 
+## Get started
+
+The easiest way to get started is to deploy Rally on Zenith: fully managed, with no setup.
+
+[![Deploy with Zenith](https://cdn.zenith.hosting/buttons/deploy-with-zenith.svg)](https://zenith.hosting/host/rally)
+
 ## Start a server
 
 Use a Linux AMD64 or ARM64 host with rootless Podman, podman-compose, OpenSSL and a systemd user session. Download `rally-compose.tar.gz` from your chosen release on [GitHub Releases](https://github.com/arctic-hen7/rally/releases).
