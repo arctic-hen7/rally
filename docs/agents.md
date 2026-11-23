@@ -14,7 +14,7 @@ Keep secret files outside the build context. Pass host paths in `RALLY_RUNTIME_M
 
 Podman provides the hosted execution boundary. Inside that container the bundled harness can run commands without a second OS sandbox or interactive approval. Hosts using the development-only local engine retain the native workspace sandbox.
 
-The bundled default adapter uses Codex app-server over stdio. Set `RALLY_ADAPTER=acp` to use the bundled Codex ACP bridge. A replacement ACP executable must support session creation, prompts and session loading for continuity. Steering support depends on adapter capabilities. The local Codex and Claude Code capture hooks operate independently of this choice.
+The bundled default adapter uses Codex app-server over stdio. Set `RALLY_ADAPTER=acp` to use an ACP executable named by `RALLY_ACP` (default `codex-acp`), installed in a derived worker image. A replacement ACP executable must support session creation, prompts and session loading for continuity. Steering support depends on adapter capabilities. The local Codex and Claude Code capture hooks operate independently of this choice.
 
 For a Responses-compatible provider, create an operator-owned Codex configuration like:
 

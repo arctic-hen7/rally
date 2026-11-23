@@ -1,4 +1,16 @@
-FROM docker.io/library/node:24-trixie-slim
-RUN apt-get update && apt-get install -y --no-install-recommends git openssh-client ca-certificates libssl3t64 ripgrep && rm -rf /var/lib/apt/lists/*
-RUN npm install --global @openai/codex@0.170.0 @agentclientprotocol/codex-acp@2.7.0
+FROM docker.io/library/node:24-alpine AS codex
+ARG CODEX_VERSION=0.170.0
+WORKDIR /fetch
+RUN case "$(uname -m)" in x86_64) arch=x64 ;; aarch64) arch=arm64 ;; *) exit 1 ;; esac \
+ && npm pack --silent "@openai/codex@$CODEX_VERSION-linux-$arch" \
+ && tar -xzf openai-codex-*.tgz \
+ && mv package/vendor/*-linux-musl /opt/codex \
+ && rm -rf /opt/codex/bin/codex-code-mode-host /opt/codex/codex-resources/voice
+
+FROM cgr.dev/chainguard/wolfi-base
+RUN apk add --no-cache git openssh-client
+COPY --from=codex /opt/codex /opt/codex
+RUN mkdir -p /usr/local/bin \
+ && ln -s /opt/codex/bin/codex /usr/local/bin/codex \
+ && ln -s /opt/codex/codex-path/rg /usr/local/bin/rg
 WORKDIR /workspace

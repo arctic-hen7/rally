@@ -25,6 +25,12 @@ default-run = "rally"
 [lib]
 name = "rally_teams"
 
+[profile.release]
+strip = true
+opt-level = "s"
+lto = true
+codegen-units = 1
+
 [workspace.dependencies]
 anyhow = "1"
 base64 = "0.22"
