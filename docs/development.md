@@ -40,7 +40,6 @@ Run `python3 tests/compose_setup.py` on a host with podman-compose and PyYAML to
 Use a disposable installation with a separate Compose project, socket owner or dedicated Podman user, data directory, credentials, network, published port and runtime image tag. Run the commands below from the repository root. Set `RALLY_CODEX_CONFIG` to the absolute path to `tests/provider.toml` for the offline provider. Supply your disposable configuration as `test.env` and keep it out of version control. The provider override mounts an offline Responses API fixture into a separate container on the test network. It requires no model account.
 
 ```sh
-export RALLY_ADAPTER=acp
 podman-compose --env-file test.env -p rally_test -f compose.yml -f tests/compose-provider.yml up -d --build
 export RALLY_URL=http://127.0.0.1:18879
 export RALLY_TEST_WORKSPACES=/absolute/path/to/test-data/missions
@@ -49,7 +48,7 @@ export RALLY_TEST_PASSWORD=your-disposable-password
 python3 tests/hosted_smoke.py
 ```
 
-Set `RALLY_LISTEN=127.0.0.1:18879` in the disposable config for the example port. Bootstrap the fixture's organisation owner first. The hosted smoke test dispatches two turns to a real Codex harness, runs a shell command inside its container and checks the resulting file on the host. Set `RALLY_TEST_GIT_ORIGIN` for the smoke test if you have started the disposable HTTPS forge from `tests/git_forge.py` on the test network and configured its CA on the server. The offline provider will also ask Codex to fetch and push the fixture repository. Recreate the server with `RALLY_ADAPTER=codex` to exercise its native protocol. For the routine round trip, set `RALLY_TOKEN` to a token from this test organisation and run `python3 tests/compose_smoke.py`. The routine verifies the engine socket is absent in its container and uses the mounted CLI to post to the test mission. Shut down the specific Compose project with the same env file and file list.
+Set `RALLY_LISTEN=127.0.0.1:18879` in the disposable config for the example port. Bootstrap the fixture's organisation owner first. The hosted smoke test dispatches two turns to a real Codex harness, runs a shell command inside its container and checks the resulting file on the host. Set `RALLY_TEST_GIT_ORIGIN` for the smoke test if you have started the disposable HTTPS forge from `tests/git_forge.py` on the test network and configured its CA on the server. The offline provider will also ask Codex to fetch and push the fixture repository. For the routine round trip, set `RALLY_TOKEN` to a token from this test organisation and run `python3 tests/compose_smoke.py`. The routine verifies the engine socket is absent in its container and uses the mounted CLI to post to the test mission. Shut down the specific Compose project with the same env file and file list.
 
 ## CI and releases
 
