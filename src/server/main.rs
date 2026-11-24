@@ -8,6 +8,7 @@ mod git;
 mod notify;
 pub mod provider;
 mod routines;
+mod routing;
 mod runtime;
 mod search;
 mod secrets;
@@ -200,6 +201,7 @@ async fn rpc(
 ) -> ApiResult {
     let a = auth::actor(&app, &headers).await?;
     let result = match op.as_str() {
+        s if s.starts_with("routing.") => routing::call(&app, &a, s, &data).await?,
         s if s.starts_with("connection.") => connections::call(&app, &a, s, &data).await?,
         "models.settings" => {
             admin(&a)?;

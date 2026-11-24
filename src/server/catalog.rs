@@ -35,7 +35,7 @@ pub async fn call(app: &App, a: &Actor, op: &str, d: &Value) -> Result<Value> {
             sqlx::query("INSERT INTO threads(id,mission,title,kind) VALUES($1,$2,'Main','main')").bind(&tid).bind(&mid).execute(&mut *tx).await?;
             sqlx::query("INSERT INTO participants VALUES($1,$2)").bind(&tid).bind(&a.uid).execute(&mut *tx).await?;
             if let Some(parent)=&from{
-                sqlx::query("INSERT INTO repos(mission,name,remote,branch,status) SELECT $1,name,remote,$2,jsonb_build_object('fork_from',branch) FROM repos WHERE mission=$3").bind(&mid).bind(&mid).bind(parent).execute(&mut *tx).await?;
+                sqlx::query("INSERT INTO repos(mission,name,remote,branch,status) SELECT $1,name,remote,CASE WHEN NOT read_only THEN $2 END,CASE WHEN read_only THEN '{}'::jsonb ELSE jsonb_build_object('fork_from',branch) END FROM repos WHERE mission=$3").bind(&mid).bind(&mid).bind(parent).execute(&mut *tx).await?;
             }
             for (r,cid) in verified{
                 sqlx::query("INSERT INTO repos(mission,name,remote,branch,contributor,connection,needs_transfer) VALUES($1,$2,$3,$4,$5,$6,false)").bind(&mid).bind(field(r,"name")?).bind(field(r,"remote")?).bind(field(r,"branch")?).bind(&a.uid).bind(cid).execute(&mut *tx).await?;
@@ -53,7 +53,9 @@ pub async fn call(app: &App, a: &Actor, op: &str, d: &Value) -> Result<Value> {
             if op!="mission.show"{personal(a)?;}
             if op=="mission.update" {sqlx::query("UPDATE missions SET title=COALESCE($2,title),description=COALESCE($3,description),status=COALESCE($4,status) WHERE id=$1").bind(&mid).bind(d["title"].as_str()).bind(d["description"].as_str()).bind(d["status"].as_str()).execute(db).await?;}
             let mut m=one(db,"SELECT to_jsonb(m) FROM missions m WHERE id=$1",&[&mid]).await?;
-            m["repos"]=rows(db,"SELECT to_jsonb(r) FROM repo_details r WHERE mission=$1 ORDER BY name",&[&mid]).await?;
+            m["repos"]=rows(db,"SELECT to_jsonb(r) FROM repo_details r WHERE mission=$1 AND NOT read_only ORDER BY name",&[&mid]).await?;
+            m["read_only_repos"]=rows(db,"SELECT to_jsonb(r) FROM repo_details r WHERE mission=$1 AND read_only ORDER BY remote",&[&mid]).await?;
+            m["git_requests"]=routing::pending(app,&mid).await?;
             m["threads"]=rows(db,"SELECT to_jsonb(t) FROM threads t WHERE mission=$1 ORDER BY (kind='main') DESC,created DESC",&[&mid]).await?;
             Ok(m)
         }
@@ -233,7 +235,7 @@ async fn change_membership(app: &App, a: &Actor, op: &str, d: &Value) -> Result<
         }
     }
     let (missions, names): (Vec<_>, Vec<_>) = candidates.into_iter().unzip();
-    let affected:Vec<String>=sqlx::query_scalar("SELECT r.mission||' / '||r.name FROM repos r JOIN unnest($1::text[],$2::text[]) c(mission,name) USING(mission,name) WHERE r.needs_transfer ORDER BY r.mission,r.name").bind(missions).bind(names).fetch_all(&mut *tx).await?;
+    let affected:Vec<String>=sqlx::query_scalar("SELECT r.mission||' / '||CASE WHEN r.read_only THEN r.remote ELSE r.name END FROM repos r JOIN unnest($1::text[],$2::text[]) c(mission,name) USING(mission,name) WHERE r.needs_transfer ORDER BY r.mission,r.name").bind(missions).bind(names).fetch_all(&mut *tx).await?;
     if d["preview"] == true {
         tx.rollback().await?;
         return Ok(json!({"affected":affected}));

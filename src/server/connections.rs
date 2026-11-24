@@ -104,20 +104,27 @@ impl Lease {
         }
     }
     pub fn env(&self) -> Vec<(String, String)> {
-        vec![
-            ("GIT_CONFIG_COUNT".into(), "2".into()),
+        self.git_env(Vec::new())
+    }
+
+    pub fn git_env(&self, extra: Vec<(String, String)>) -> Vec<(String, String)> {
+        let mut config = vec![
             (
-                "GIT_CONFIG_KEY_0".into(),
                 format!("http.{}/.extraHeader", self.base),
-            ),
-            (
-                "GIT_CONFIG_VALUE_0".into(),
                 format!("Authorization: Bearer {}", self.token),
             ),
-            ("GIT_CONFIG_KEY_1".into(), "http.followRedirects".into()),
-            ("GIT_CONFIG_VALUE_1".into(), "false".into()),
-            ("GIT_TERMINAL_PROMPT".into(), "0".into()),
-        ]
+            ("http.followRedirects".to_owned(), "false".to_owned()),
+        ];
+        config.extend(extra);
+        let mut env = vec![
+            ("GIT_TERMINAL_PROMPT".to_owned(), "0".to_owned()),
+            ("GIT_CONFIG_COUNT".to_owned(), config.len().to_string()),
+        ];
+        for (i, (key, value)) in config.into_iter().enumerate() {
+            env.push((format!("GIT_CONFIG_KEY_{i}"), key));
+            env.push((format!("GIT_CONFIG_VALUE_{i}"), value));
+        }
+        env
     }
     pub fn url(&self, name: &str) -> String {
         format!("{}/{name}", self.base)
@@ -145,13 +152,16 @@ pub async fn probe(
     validate(&app.db, owner, remote, connection).await?;
     let lease = source(app, remote, owner, connection);
     let mut cmd = tokio::process::Command::new("git");
-    cmd.current_dir(&app.root).envs(lease.env()).args([
-        "ls-remote",
-        "--exit-code",
-        "--",
-        &lease.url("repo"),
-        reference,
-    ]);
+    cmd.current_dir(&app.root)
+        .envs(lease.env())
+        .arg("ls-remote");
+    if !reference.is_empty() {
+        cmd.arg("--exit-code");
+    }
+    cmd.args(["--", &lease.url("repo")]);
+    if !reference.is_empty() {
+        cmd.arg(reference);
+    }
     engine::output(cmd).await.map_err(|_| {
         anyhow::anyhow!("Could not read this repository and ref using the selected Git access")
     })?;
@@ -185,6 +195,12 @@ async fn forward(
         .get(&rally_teams::digest(token))
         .cloned()
         .context("Access denied")?;
+    let (routed, operation) = if name == "@routes" {
+        let (path, op) = operation.split_once('/').context("Invalid Git route")?;
+        (Some(routing::requested(path)?), op)
+    } else {
+        (None, operation)
+    };
     let query = req.uri().query();
     let service = match (req.method(), operation, query) {
         (&Method::GET, "info/refs", Some("service=git-upload-pack"))
@@ -204,26 +220,71 @@ async fn forward(
     };
     let (remote, owner, connection) = match scope {
         Scope::Mission(mid) if key == mid => {
-            let row=sqlx::query("SELECT remote,contributor,connection FROM repos WHERE mission=$1 AND name=$2 AND NOT needs_transfer AND can_read(contributor,mission)")
-                .bind(mid).bind(&name).fetch_optional(&app.db).await?.context("Access denied")?;
-            (
-                row.get::<String, _>("remote"),
-                row.get::<String, _>("contributor"),
-                row.get::<Option<String>, _>("connection"),
-            )
+            let candidates=sqlx::query("SELECT name,remote,contributor,connection,read_only,(NOT needs_transfer AND can_read(contributor,mission)) AS active FROM repos WHERE mission=$1 AND ($2='@routes' OR name=$2) ORDER BY name")
+                .bind(&mid).bind(name).fetch_all(&app.db).await?;
+            let rows: Vec<_> = candidates
+                .iter()
+                .filter(|row| {
+                    routed.as_ref().is_none_or(|url| {
+                        routing::identity(url) == routing::identity(row.get("remote"))
+                    })
+                })
+                .collect();
+            if rows.is_empty()
+                && service == "git-upload-pack"
+                && let Some(url) = &routed
+            {
+                routing::request(app, &mid, url).await?;
+                bail!("Git read access requested for {url}");
+            }
+            let active: Vec<_> = rows
+                .into_iter()
+                .filter(|r| {
+                    r.get::<bool, _>("active")
+                        && (service == "git-upload-pack" || !r.get::<bool, _>("read_only"))
+                })
+                .collect();
+            let row = active.first().context("Access denied")?;
+            let owner: String = row.get("contributor");
+            let connection: Option<String> = row.get("connection");
+            if active
+                .iter()
+                .any(|other| other.get::<Option<String>, _>("connection") != connection)
+            {
+                bail!(
+                    "Multiple Git connections for this repository. Use its named workspace origin"
+                );
+            }
+            (row.get::<String, _>("remote"), owner, connection)
         }
         Scope::Job(id) if key == id => {
-            let row=sqlx::query("SELECT j.owner_id,repo FROM jobs j JOIN routines r ON r.id=j.routine AND r.owner_id=j.owner_id CROSS JOIN LATERAL jsonb_array_elements(j.definition->'repos') repo WHERE j.id=$1 AND j.status='working' AND repo->>'name'=$2 AND r.repos @> jsonb_build_array(repo) AND NOT coalesce((repo->>'needs_connection')::boolean,false)")
-                .bind(id).bind(&name).fetch_optional(&app.db).await?.context("Access denied")?;
-            let repo: Value = row.get("repo");
-            (
-                field(&repo, "remote")?.into(),
-                row.get("owner_id"),
-                repo["connection"]
-                    .as_str()
-                    .filter(|v| !v.is_empty())
-                    .map(str::to_owned),
-            )
+            let candidates=sqlx::query("SELECT j.owner_id,repo FROM jobs j JOIN routines r ON r.id=j.routine AND r.owner_id=j.owner_id CROSS JOIN LATERAL jsonb_array_elements(j.definition->'repos') repo WHERE j.id=$1 AND j.status='working' AND ($2='@routes' OR repo->>'name'=$2) AND r.repos @> jsonb_build_array(repo) AND NOT coalesce((repo->>'needs_connection')::boolean,false)")
+                .bind(id).bind(name).fetch_all(&app.db).await?;
+            let mut grants = Vec::new();
+            for row in candidates {
+                let repo: Value = row.get("repo");
+                let remote = field(&repo, "remote")?;
+                if routed
+                    .as_ref()
+                    .is_none_or(|url| routing::identity(url) == routing::identity(remote))
+                {
+                    grants.push((
+                        remote.to_owned(),
+                        row.get::<String, _>("owner_id"),
+                        repo["connection"]
+                            .as_str()
+                            .filter(|s| !s.is_empty())
+                            .map(str::to_owned),
+                    ));
+                }
+            }
+            let grant = grants.first().context("Access denied")?;
+            if grants.iter().any(|g| g.2 != grant.2) {
+                bail!(
+                    "Multiple Git connections for this repository. Use its named workspace origin"
+                );
+            }
+            grant.clone()
         }
         Scope::Source {
             remote,
@@ -341,7 +402,7 @@ pub async fn call(app: &App, a: &Actor, op: &str, d: &Value) -> Result<Value> {
         .context("Access denied")?;
     match op {
         "connection.usage" => {
-            let uses:Vec<Value>=sqlx::query_scalar("SELECT jsonb_build_object('type','mission','target',mission,'name',name) FROM repos WHERE connection=$1 UNION ALL SELECT jsonb_build_object('type','skill','target',id,'name',name) FROM skills WHERE connection=$1 UNION ALL SELECT jsonb_build_object('type','routine','target',id,'name',name) FROM routines WHERE repos @> jsonb_build_array(jsonb_build_object('connection',$1::text))").bind(cid).fetch_all(&mut *tx).await?;
+            let uses:Vec<Value>=sqlx::query_scalar("SELECT jsonb_build_object('type','mission','target',mission,'name',CASE WHEN read_only THEN remote ELSE name END) FROM repos WHERE connection=$1 UNION ALL SELECT jsonb_build_object('type','skill','target',id,'name',name) FROM skills WHERE connection=$1 UNION ALL SELECT jsonb_build_object('type','routine','target',id,'name',name) FROM routines WHERE repos @> jsonb_build_array(jsonb_build_object('connection',$1::text))").bind(cid).fetch_all(&mut *tx).await?;
             return Ok(json!(uses));
         }
         "connection.update" => {

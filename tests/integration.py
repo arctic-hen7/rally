@@ -6,6 +6,7 @@ import http.cookiejar
 from oidc_fixture import Issuer
 from git_forge import Forge
 import git_connections
+import git_routing
 import cli_headers
 import features
 import os
@@ -80,7 +81,7 @@ class Suite:
         self.env["GIT_CONFIG_COUNT"] = "1"
         self.env["GIT_CONFIG_KEY_0"] = f"url.{root}/git/.insteadOf"
         self.env["GIT_CONFIG_VALUE_0"] = self.forge.origin + "/"
-        self.env["GIT_ALLOW_PROTOCOL"] = "file:https:http:ssh"
+        self.env["GIT_ALLOW_PROTOCOL"] = "file:https:http:ssh:rallygit"
         self.issuer = Issuer(root)
         self.env.update(RALLY_OIDC_ISSUER=self.issuer.url, RALLY_OIDC_CLIENT_ID="rally")
         self.process = None
@@ -810,6 +811,7 @@ def main():
                 suite.git_and_skills()
                 suite.routines()
                 git_connections.contract(suite, wait)
+                git_routing.contract(suite, wait)
                 features.secrets_and_access(suite)
                 features.trigger_contract(suite)
                 features.provider_contract(suite, BIN / "rally-server", ROOT)

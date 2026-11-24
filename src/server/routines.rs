@@ -245,10 +245,11 @@ async fn upkeep(app: App) {
             if let Err(e) = skills::refresh(&app).await {
                 eprintln!("Skills: {e}");
             }
-            if let Ok(missions) =
-                sqlx::query_scalar::<_, String>("SELECT DISTINCT mission FROM repos")
-                    .fetch_all(&app.db)
-                    .await
+            if let Ok(missions) = sqlx::query_scalar::<_, String>(
+                "SELECT DISTINCT mission FROM repos WHERE NOT read_only",
+            )
+            .fetch_all(&app.db)
+            .await
             {
                 for m in missions {
                     if let Err(e) = git::sync(&app, &m).await {
@@ -290,7 +291,7 @@ async fn run(app: &App, jid: &str, token: &str) -> Result<(&'static str, String)
         ),
     ]);
     let access = connections::Lease::new(app, connections::Scope::Job(jid.into()));
-    env.extend(access.env());
+    env.extend(routing::worker_env(app, &access, &r["repos"]).await?);
     let name = format!("rally-{jid}");
     let mut shutdown = app.shutdown.clone();
     for repo in r["repos"].as_array().into_iter().flatten() {

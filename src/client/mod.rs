@@ -1,3 +1,4 @@
+mod git_remote;
 mod headers;
 mod hooks;
 mod oidc;
@@ -252,6 +253,33 @@ const OPS: &[(&str, &str, &str)] = &[
         "skill connection",
         "Reconnect a Git skill using your access",
     ),
+    ("routing.list", "", "List organisation Git URL rules"),
+    (
+        "routing.create",
+        "source upstream scope",
+        "Route a repository or prefix to HTTPS",
+    ),
+    (
+        "routing.update",
+        "id source upstream scope",
+        "Edit a Git URL rule",
+    ),
+    ("routing.remove", "id", "Remove a Git URL rule"),
+    (
+        "repo.requests",
+        "mission",
+        "List pending repository read requests",
+    ),
+    (
+        "repo.attach",
+        "mission remote connection confirm",
+        "Attach a requested dependency read-only",
+    ),
+    (
+        "repo.dismiss",
+        "mission remote",
+        "Dismiss a repository read request",
+    ),
     ("repo.list", "mission", "List tracked branches"),
     ("repo.status", "mission", "Inspect hosted checkout state"),
     (
@@ -496,6 +524,17 @@ fn stdin() -> Result<String> {
     Ok(s)
 }
 pub fn main() -> Result<()> {
+    let mut argv = std::env::args();
+    if argv.next().is_some_and(|p| {
+        Path::new(&p)
+            .file_name()
+            .is_some_and(|f| f == "git-remote-rallygit")
+    }) {
+        return git_remote::serve(
+            &argv.next().context("Missing Git remote name")?,
+            &argv.next().context("Missing Git remote URL")?,
+        );
+    }
     let matches = cli().get_matches();
     let (name, m) = matches.subcommand().unwrap();
     let (op, m) = if let Some((sub, m)) = m.subcommand() {

@@ -24,6 +24,12 @@ fn installation_label() -> Result<String> {
 
 pub async fn build(app: &App) -> Result<()> {
     if local() {
+        let tools = app.root.join("tools");
+        tokio::fs::create_dir_all(&tools).await?;
+        let helper = tools.join("git-remote-rallygit");
+        if !helper.exists() {
+            tokio::fs::symlink(std::env::current_exe()?.with_file_name("rally"), helper).await?;
+        }
         return Ok(());
     }
     // The database lock ensures previous workers from this installation are orphaned
@@ -132,6 +138,11 @@ pub fn command(
         "--volume",
         &format!(
             "{}:/usr/local/bin/rally:ro",
+            host_root.join("tools/rally").display()
+        ),
+        "--volume",
+        &format!(
+            "{}:/usr/local/bin/git-remote-rallygit:ro",
             host_root.join("tools/rally").display()
         ),
     ]);

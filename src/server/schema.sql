@@ -166,8 +166,11 @@ ALTER TABLE skills ADD COLUMN IF NOT EXISTS git_owner text REFERENCES people,
     ADD COLUMN IF NOT EXISTS connection text REFERENCES git_connections,
     ADD COLUMN IF NOT EXISTS git_paused boolean NOT NULL DEFAULT false,
     ADD COLUMN IF NOT EXISTS last_fetch timestamptz;
+ALTER TABLE repos ALTER COLUMN branch DROP NOT NULL;
+ALTER TABLE repos ADD COLUMN IF NOT EXISTS read_only boolean GENERATED ALWAYS AS (branch IS NULL) STORED;
 CREATE OR REPLACE VIEW repo_details AS
-    SELECT r.*,p.name AS contributor_name FROM repos r LEFT JOIN people p ON p.id=r.contributor;
+    SELECT r.mission,r.name,r.remote,r.branch,r.recovery,r.status,r.contributor,r.connection,r.needs_transfer,
+        p.name AS contributor_name,r.read_only FROM repos r LEFT JOIN people p ON p.id=r.contributor;
 
 CREATE OR REPLACE FUNCTION suspend_repo_access() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
@@ -181,3 +184,19 @@ CREATE OR REPLACE TRIGGER repo_group_loss AFTER DELETE ON group_members
     FOR EACH STATEMENT EXECUTE FUNCTION suspend_repo_access();
 CREATE OR REPLACE TRIGGER repo_admin_loss AFTER UPDATE OF admin,owner ON people
     FOR EACH STATEMENT EXECUTE FUNCTION suspend_repo_access();
+
+CREATE TABLE IF NOT EXISTS git_routes (
+    id text PRIMARY KEY, source text NOT NULL, upstream text NOT NULL,
+    scope text NOT NULL CHECK(scope IN ('repository','prefix')), UNIQUE(source,scope)
+);
+CREATE TABLE IF NOT EXISTS git_requests (
+    mission text REFERENCES missions, remote text NOT NULL, identity text NOT NULL,
+    dismissed boolean NOT NULL DEFAULT false, PRIMARY KEY(mission,identity)
+);
+CREATE OR REPLACE FUNCTION git_route_covers(repo_identity text) RETURNS boolean LANGUAGE sql STABLE AS $$
+    SELECT EXISTS (
+        SELECT 1 FROM git_routes WHERE
+            (scope='repository' AND regexp_replace(rtrim(upstream,'/'),'[.]git$','')=repo_identity)
+            OR (scope='prefix' AND starts_with(repo_identity,rtrim(upstream,'/')||'/'))
+    )
+$$;

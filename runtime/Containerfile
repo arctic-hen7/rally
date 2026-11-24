@@ -8,7 +8,9 @@ RUN case "$(uname -m)" in x86_64) arch=x64 ;; aarch64) arch=arm64 ;; *) exit 1 ;
  && rm -rf /opt/codex/bin/codex-code-mode-host /opt/codex/codex-resources/voice
 
 FROM cgr.dev/chainguard/wolfi-base
-RUN apk add --no-cache git openssh-client
+ENV CARGO_NET_GIT_FETCH_WITH_CLI=true POETRY_SYSTEM_GIT_CLIENT=true
+RUN apk add --no-cache git openssh-client \
+ && git config --system protocol.ssh.allow never
 COPY --from=codex /opt/codex /opt/codex
 RUN mkdir -p /usr/local/bin \
  && ln -s /opt/codex/bin/codex /usr/local/bin/codex \

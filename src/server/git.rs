@@ -234,7 +234,7 @@ pub async fn sync_before_run(app: &App, mid: &str, rid: &str) -> Result<Value> {
     let idle:bool=sqlx::query_scalar("SELECT NOT EXISTS(SELECT 1 FROM runs r JOIN sessions s ON s.id=r.session JOIN threads t ON t.id=s.thread WHERE t.mission=$1 AND r.id!=$2 AND r.status IN ('working','stopping'))").bind(mid).bind(rid).fetch_one(&app.db).await?;
     let repos = rows(
         &app.db,
-        "SELECT to_jsonb(r) FROM repo_details r WHERE mission=$1 ORDER BY name",
+        "SELECT to_jsonb(r) FROM repo_details r WHERE mission=$1 AND NOT read_only ORDER BY name",
         &[mid],
     )
     .await?;
@@ -303,8 +303,17 @@ pub async fn verify_binding(
 }
 
 pub async fn call(app: &App, a: &Actor, op: &str, d: &Value) -> Result<Value> {
-    let mid = mission(app, a, field(d, "mission")?, op != "repo.list").await?;
+    let mid = mission(
+        app,
+        a,
+        field(d, "mission")?,
+        !matches!(op, "repo.list" | "repo.requests"),
+    )
+    .await?;
     let root = workspace(app, &mid);
+    if op == "repo.requests" {
+        return routing::pending(app, &mid).await;
+    }
     if op == "repo.list" {
         return rows(
             &app.db,
@@ -315,8 +324,23 @@ pub async fn call(app: &App, a: &Actor, op: &str, d: &Value) -> Result<Value> {
     }
     personal(a)?;
     match op {
-        "repo.add" | "repo.takeover" => {
-            let name = slug(field(d, "name")?)?;
+        "repo.dismiss" => {
+            execute(
+                &app.db,
+                "UPDATE git_requests SET dismissed=true WHERE mission=$1 AND identity=$2",
+                &[&mid, &routing::identity(field(d, "remote")?)],
+            )
+            .await?;
+            let _ = app.events.send(mid);
+            return Ok(json!({"ok":true}));
+        }
+        "repo.add" | "repo.takeover" | "repo.attach" => {
+            let name = if op == "repo.attach" {
+                id("dep")
+            } else {
+                slug(field(d, "name")?)?.to_owned()
+            };
+            let name = name.as_str();
             let _guard = app.git_lock.lock().await;
             let binding = if op == "repo.takeover" {
                 one(
@@ -328,10 +352,26 @@ pub async fn call(app: &App, a: &Actor, op: &str, d: &Value) -> Result<Value> {
             } else {
                 d.clone()
             };
-            let (remote, branch) = (field(&binding, "remote")?, field(&binding, "branch")?);
+            let remote = field(&binding, "remote")?;
+            let read_only =
+                op == "repo.attach" || (op == "repo.takeover" && binding["read_only"] == true);
+            let branch = if read_only {
+                None
+            } else {
+                Some(field(&binding, "branch")?)
+            };
             let cid = d["connection"].as_str().filter(|v| !v.is_empty());
-            let base = binding["status"]["fork_from"].as_str().unwrap_or(branch);
-            let cid = verify_binding(app, a, &binding, base, cid, d["confirm"] == true).await?;
+            let cid = if let Some(branch) = branch {
+                let base = binding["status"]["fork_from"].as_str().unwrap_or(branch);
+                verify_binding(app, a, &binding, base, cid, d["confirm"] == true).await?
+            } else {
+                let cid = connections::selected(app, a, remote, cid).await?;
+                if cid.is_some() && d["confirm"] != true {
+                    bail!("Confirm sharing read access with this mission");
+                }
+                connections::probe(app, &a.uid, remote, cid.as_deref(), "").await?;
+                cid
+            };
             if op == "repo.add" && root.join(name).exists() {
                 let saved = command(
                     app,
@@ -368,12 +408,46 @@ pub async fn call(app: &App, a: &Actor, op: &str, d: &Value) -> Result<Value> {
             {
                 bail!("Access denied");
             }
-            if op == "repo.add" {
+            connections::validate(&mut *tx, &a.uid, remote, cid.as_deref()).await?;
+            sqlx::query("SELECT id FROM missions WHERE id=$1 FOR UPDATE")
+                .bind(&mid)
+                .execute(&mut *tx)
+                .await?;
+            let key = routing::identity(remote);
+            if op != "repo.takeover" {
+                let existing =
+                    sqlx::query("SELECT name,remote,read_only FROM repos WHERE mission=$1")
+                        .bind(&mid)
+                        .fetch_all(&mut *tx)
+                        .await?;
+                for row in existing {
+                    if routing::identity(row.get("remote")) == key {
+                        if read_only {
+                            bail!("This repository is already attached");
+                        }
+                        if row.get::<bool, _>("read_only") {
+                            sqlx::query("DELETE FROM repos WHERE mission=$1 AND name=$2")
+                                .bind(&mid)
+                                .bind(row.get::<String, _>("name"))
+                                .execute(&mut *tx)
+                                .await?;
+                        }
+                    }
+                }
                 sqlx::query("INSERT INTO repos(mission,name,remote,branch,contributor,connection,needs_transfer) VALUES($1,$2,$3,$4,$5,$6,false)").bind(&mid).bind(name).bind(remote).bind(branch).bind(&a.uid).bind(cid).execute(&mut *tx).await?;
+                sqlx::query("DELETE FROM git_requests WHERE mission=$1 AND identity=$2")
+                    .bind(&mid)
+                    .bind(key)
+                    .execute(&mut *tx)
+                    .await?;
             } else {
                 sqlx::query("UPDATE repos SET contributor=$3,connection=$4,needs_transfer=false WHERE mission=$1 AND name=$2").bind(&mid).bind(name).bind(&a.uid).bind(cid).execute(&mut *tx).await?;
             }
             tx.commit().await?;
+            let _ = app.events.send(mid.clone());
+            if read_only {
+                return Ok(json!({"name":name,"read_only":true}));
+            }
         }
         "repo.withdraw" => {
             let changed=sqlx::query("UPDATE repos SET needs_transfer=true,connection=NULL WHERE mission=$1 AND name=$2 AND contributor=$3")
@@ -396,7 +470,7 @@ pub async fn call(app: &App, a: &Actor, op: &str, d: &Value) -> Result<Value> {
             let name = slug(field(d, "name")?)?;
             let r = one(
                 &app.db,
-                "SELECT to_jsonb(r) FROM repos r WHERE mission=$1 AND name=$2",
+                "SELECT to_jsonb(r) FROM repos r WHERE mission=$1 AND name=$2 AND NOT read_only",
                 &[&mid, name],
             )
             .await?;
@@ -510,7 +584,7 @@ pub async fn call(app: &App, a: &Actor, op: &str, d: &Value) -> Result<Value> {
             let name = slug(field(d, "name")?)?;
             one(
                 &app.db,
-                "SELECT to_jsonb(name) FROM repos WHERE mission=$1 AND name=$2",
+                "SELECT to_jsonb(name) FROM repos WHERE mission=$1 AND name=$2 AND NOT read_only",
                 &[&mid, name],
             )
             .await?;

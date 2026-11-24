@@ -98,6 +98,11 @@ for line in sys.stdin:
                 '"questionItemId":"ask-colour"' in text and '"answer":"Amber"' in text
             )
             finish("Applied the queued answer.")
+        elif "ROUTING_FIXTURE " in text.rsplit("### Addressed by", 1)[-1]:
+            from git_routing import worker_probe
+
+            data, _ = json.JSONDecoder().raw_decode(text.rsplit("ROUTING_FIXTURE ", 1)[-1])
+            finish(worker_probe(data))
         elif "GIT_MISSION_PROBE" in text.rsplit("### Addressed by", 1)[-1]:
             subprocess.run(
                 [

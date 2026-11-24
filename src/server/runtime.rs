@@ -197,7 +197,7 @@ async fn drive(app: &App, rid: &str, token: &str, resuming: bool) -> Result<()> 
             run: rid.into(),
         },
     );
-    env.extend(git.env());
+    env.extend(routing::worker_env(app, &git, &repos).await?);
     env.extend([
         ("RALLY_URL".into(), var("RALLY_WORKER_URL", &app.base)),
         ("RALLY_TOKEN".into(), token.into()),
