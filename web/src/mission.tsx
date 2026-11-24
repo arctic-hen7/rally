@@ -1,3 +1,4 @@
+import { gitRequestHelp } from './git-routing';
 import { SecretsPanel } from './access';
 import React, { useEffect, useRef, useState } from 'react';
 import {
@@ -17,6 +18,7 @@ import {
     Flag,
     GitBranch,
     Hash,
+    Info,
     Layers,
     Link2,
     Menu,
@@ -208,11 +210,23 @@ export function Mission({
     const ext = m.threads.filter((x: any) => x.kind === 'external');
     const takeOver = (repo: any) =>
         edit({
-            title: 'Take over ' + repo.name,
+            title: 'Take over ' + (repo.read_only ? repo.remote : repo.name),
             op: 'repo.takeover',
-            initial: { mission: m.id, name: repo.name, remote: repo.remote },
+            initial: { mission: m.id, name: repo.name, remote: repo.remote, read_only: repo.read_only },
             fields: [{ key: 'connection', label: 'Git connection', type: 'git-access' }],
             submit: 'Use my Git access',
+        });
+    const readOnlyRepos = m.read_only_repos || [];
+    const attach = (remote?: string) =>
+        edit({
+            title: 'Attach read-only repository',
+            op: 'repo.attach',
+            initial: { mission: m.id, remote },
+            fields: [
+                required('remote', 'HTTPS repository URL'),
+                { key: 'connection', label: 'Git connection', type: 'git-access' },
+            ],
+            submit: 'Add to mission (read-only)',
         });
     const conflicts = m.repos.filter(
         (r: any) =>
@@ -523,13 +537,30 @@ export function Mission({
                                     {r.agent_name || r.name || 'Agent'} is working
                                 </button>
                             ))}
-                        {m.repos
+                        {(m.git_requests || []).map((remote: string) => (
+                            <div className="notice git-request" key={remote}>
+                                <span>
+                                    Git read access requested for <b>{remote}</b>
+                                </span>
+                                <details className="git-help">
+                                    <summary title={gitRequestHelp} aria-label="About this repository request">
+                                        <Info />
+                                    </summary>
+                                    <span>{gitRequestHelp}</span>
+                                </details>
+                                <button onClick={() => attach(remote)}>Add to mission (read-only)</button>
+                                <button onClick={() => act('repo.dismiss', { mission: m.id, remote })}>
+                                    Dismiss
+                                </button>
+                            </div>
+                        ))}
+                        {[...m.repos, ...readOnlyRepos]
                             .filter((r: any) => r.needs_transfer)
                             .map((r: any) => (
                                 <div className="notice warning" key={r.name}>
                                     <GitBranch />
                                     <span>
-                                        Hosted Git access paused for <b>{r.name}</b>.
+                                        Hosted Git access paused for <b>{r.read_only ? r.remote : r.name}</b>.
                                     </span>
                                     <button onClick={() => takeOver(r)}>Take over</button>
                                 </div>
@@ -700,7 +731,9 @@ export function Mission({
                                     </IconButton>
                                 }
                             >
-                                {!m.repos.length && <p className="muted">No repositories attached.</p>}
+                                {!m.repos.length && !readOnlyRepos.length && (
+                                    <p className="muted">No repositories attached.</p>
+                                )}
                                 {m.repos.map((r: any) => (
                                     <div className="repo" key={r.name}>
                                         <strong>
@@ -750,6 +783,43 @@ export function Mission({
                                                     Return to {r.branch}
                                                 </button>
                                             )}
+                                        </div>
+                                    </div>
+                                ))}
+                            </Section>
+                            <Section
+                                title="Read-only repositories"
+                                action={
+                                    <IconButton title="Attach read-only repository" onClick={() => attach()}>
+                                        <Plus />
+                                    </IconButton>
+                                }
+                            >
+                                {readOnlyRepos.map((r: any) => (
+                                    <div className="repo" key={r.name}>
+                                        <strong>{r.remote}</strong>
+                                        <small>
+                                            {r.needs_transfer ? 'Needs transfer' : 'Read-only'}
+                                            {r.contributor_name && ' · Contributed by ' + r.contributor_name}
+                                        </small>
+                                        <div className="button-wrap">
+                                            <button onClick={() => takeOver(r)}>Take over</button>
+                                            {!r.needs_transfer && me.id === r.contributor && (
+                                                <button
+                                                    onClick={() =>
+                                                        act('repo.withdraw', { mission: m.id, name: r.name })
+                                                    }
+                                                >
+                                                    Withdraw my access
+                                                </button>
+                                            )}
+                                            <button
+                                                onClick={() =>
+                                                    act('repo.remove', { mission: m.id, name: r.name })
+                                                }
+                                            >
+                                                Detach
+                                            </button>
                                         </div>
                                     </div>
                                 ))}

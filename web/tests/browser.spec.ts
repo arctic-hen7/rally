@@ -357,3 +357,59 @@ test('delegate a personal Git connection to a repository and withdraw it', async
     await page.getByRole('button', { name: 'Use my Git access' }).click();
     await expect(page.getByRole('button', { name: 'Withdraw my access' })).toBeVisible();
 });
+
+test('private repository URL suggestions respect manual edits and requests can be attached read-only', async ({
+    page,
+}) => {
+    test.skip(!process.env.RALLY_TEST_GIT_ORIGIN || !process.env.RALLY_TEST_HARNESS);
+    const origin = process.env.RALLY_TEST_GIT_ORIGIN!;
+    await page.goto('/#Settings');
+    await page.getByRole('button', { name: 'Add URL', exact: true }).click();
+    const source = page.getByLabel('Source Git URL');
+    const destination = page.getByLabel('HTTPS destination');
+    const scope = page.getByRole('combobox', { name: 'Match', exact: true });
+    await source.fill('git@git.route.test:team/component.git');
+    await source.press('Tab');
+    await expect(destination).toHaveValue('https://git.route.test/team/component.git');
+    await expect(scope).toHaveValue('repository');
+    await destination.fill('');
+    await source.fill('git@git.route.test:team/');
+    await source.press('Tab');
+    await expect(destination).toHaveValue('');
+    await expect(scope).toHaveValue('prefix');
+    await destination.fill(origin);
+    await source.fill('git@git.route.test:team');
+    await source.press('Tab');
+    await expect(destination).toHaveValue(origin);
+    await page.getByRole('button', { name: 'Save rule' }).click();
+    await expect(page.getByText('ssh://git@git.route.test/team', { exact: true })).toBeVisible();
+
+    const agent = await page.request.post('/api/agent.create', {
+        data: { name: 'route-ui-' + Date.now(), model: 'fixture' },
+    });
+    const posted = await page.request.post('/api/post', {
+        data: {
+            thread: mission,
+            body: 'ROUTING_FIXTURE ' + JSON.stringify({ mode: 'missing', origin }),
+            mentions: [(await agent.json()).id],
+            confirm: true,
+        },
+    });
+    expect(posted.ok()).toBeTruthy();
+    await page.goto('/#mission/' + mission);
+    await expect(page.getByText('Git read access requested for', { exact: false })).toBeVisible();
+    await page.getByLabel('About this repository request').click();
+    await expect(
+        page.getByText(
+            'The URL of this repo matches an organisation routing rule, which may include public repos. Adding it will attach it read-only to this mission so Git can check it out using your credentials. Others in the mission will be able to implicitly read this repo, but not change it unless you add it fully to the mission as a workspace repo.',
+        ),
+    ).toBeVisible();
+    await page.getByLabel('About this repository request').click();
+    await page.getByRole('button', { name: 'Add to mission (read-only)' }).click();
+    await page.getByLabel('Git connection').selectOption({ index: 1 });
+    await page.getByRole('checkbox').check();
+    await page.getByRole('button', { name: 'Add to mission (read-only)' }).click();
+    await expect(page.getByRole('button', { name: 'Add to mission (read-only)' })).toHaveCount(0);
+    const result = await page.request.post('/api/mission.show', { data: { mission } });
+    expect((await result.json()).read_only_repos[0].remote).toBe(origin + '/dependency.git');
+});

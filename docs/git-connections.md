@@ -45,3 +45,19 @@ rally skill reconnect --skill SKILL_ID --connection CONNECTION_ID
 ```
 
 The CLI prompts for a token on create and update. For automation, pipe the token to `--token-stdin`. To attach repositories at mission creation, pass `--repos` with a JSON array of objects containing `name`, `remote`, `branch` and an optional `connection`.
+
+## Private dependencies in hosted missions
+
+An owner or admin can add a rule in **Settings → Private repository URLs**. For example, use `git@git.example.org:team/` as the source, select **Prefix**, and set the destination to `https://git.example.org/team/`. A fetch of `git@git.example.org:team/common.git` will use the same mission grant as a fetch of `https://git.example.org/team/common.git`. Use the destination URL when attaching the repository and selecting a connection. Use **Single repository** to match just one path. On leaving the source field Rally suggests a scope and HTTPS destination. Edit the destination for a different hostname, namespace or HTTPS port.
+
+Hosted Git uses the most specific matching path. A prefix covers its descendants. A repository matches with or without its final `.git`. Rally also routes HTTPS URLs of repositories already attached to the workspace. Each grant belongs to one mission and one upstream repository. If the same remote has multiple workspace connections, use the named checkout's `origin` to select its connection explicitly. A routine can use the repositories declared in its own workspace. A mission run dispatched by that routine uses the mission's grants.
+
+The first hosted read of a matching URL without a grant raises **Git read access requested** in the mission and its members' inboxes. This includes public repositories under a managed prefix. Choose **Add to mission (read-only)**, select your Git connection (or anonymous access for a public repo), then retry the fetch. **Dismiss** silences repeated requests for that URL. You can attach it later from mission details. A dependency attachment has no working directory or tracked branch. Rally checks the grant on each Git request and refuses both push discovery and the push itself. Already downloaded objects may remain in a tool's cache after access is withdrawn.
+
+To develop the dependency, add it as a workspace repository with an explicit directory, branch and connection. This replaces the read-only attachment. Membership removal, withdrawal and connection handover apply to both kinds of attachment. Local `rally open` clones only workspace repositories using the developer's own Git configuration and credentials.
+
+## Hosted Git clients
+
+The standard worker image sets `CARGO_NET_GIT_FETCH_WITH_CLI=true` for Cargo and `POETRY_SYSTEM_GIT_CLIENT=true` for Poetry 2.x. Git subprocesses inherit the routing rules, even when fetching from a package cache or a nested working directory. Tools making HTTP requests themselves, downloading registry archives, or using an embedded Git implementation need their own system-Git option where available. Unmatched HTTPS requests use the worker's ordinary network access. Unmatched private dependencies outside the configured URLs may surface only as a fetch error.
+
+SSH Git transport is disabled in the standard runtime. Managed SSH URLs are rewritten before transport selection. To allow direct SSH elsewhere, extend the worker image with `RUN git config --system protocol.ssh.allow always` and supply your own SSH setup. Git selects rewrites by literal prefix. If you enable direct SSH and an unmanaged sibling name starts with a configured single repository’s name, use `git+ssh://` for that sibling to select Git’s native SSH transport. Add package-manager defaults with `ENV` in that image. Routing rules are loaded when the hosted run or routine starts. Grants take effect on the next fetch, including within an active run.

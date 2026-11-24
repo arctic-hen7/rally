@@ -1,3 +1,4 @@
+import { RouteFields } from './git-routing';
 import { GitAccess } from './git-connections';
 import { RepositoryEditor, TriggerEditor } from './triggers';
 import { MarkdownField } from './markdown-editor';
@@ -253,7 +254,9 @@ export function Editor({
                         {form.fields
                             .filter((f) => !f.when || f.values?.includes(data[f.when]))
                             .map((f) =>
-                                f.type === 'triggers' ? (
+                                f.type === 'git-route' ? (
+                                    <RouteFields key={f.key} data={data} change={setData} />
+                                ) : f.type === 'triggers' ? (
                                     <TriggerEditor
                                         key={f.key}
                                         value={data[f.key] || []}
@@ -272,6 +275,7 @@ export function Editor({
                                         remote={data.remote || ''}
                                         connection={data.connection}
                                         confirmed={data.confirm}
+                                        readOnly={data.read_only || form.op === 'repo.attach'}
                                         share={form.op?.startsWith('repo.')}
                                         change={(connection, confirm) =>
                                             setData((old) => ({ ...old, connection, confirm }))

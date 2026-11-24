@@ -1625,3 +1625,24 @@ a {
 .section input[type='checkbox'] {
     width: auto;
 }
+
+.git-request {
+    position: relative;
+    flex-wrap: wrap;
+    overflow-wrap: anywhere;
+}
+.git-help summary {
+    display: inline-flex;
+    cursor: pointer;
+}
+.git-help > span {
+    position: absolute;
+    bottom: 100%;
+    left: 0;
+    max-width: min(28rem, 100%);
+    z-index: 3;
+    padding: 0.7rem;
+    background: var(--raised);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+}

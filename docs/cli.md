@@ -84,6 +84,8 @@ Use `--mention` and `--link` to send structured references from scripts. The fir
 | Commands | What they change or read |
 | --- | --- |
 | `topic list/create`, `mission list/show/create/update/fork` | Organise tasks. `mission update dev-12 --title … --description …` edits its descriptive fields. Use `rally status list` to find a status ID and `rally mission update dev-12 --status ID` to apply it. |
+| `routing list/create/update/remove` | Manage organisation-wide hosted Git routing. For example, `rally routing create --source git@git.example.org:team/ --upstream https://git.example.org/team/ --scope prefix`. Use `--scope repository` for one repo. |
+| `repo requests/attach/dismiss` | Review hosted dependency requests. Use `rally repo attach --mission dev-12 --remote https://git.example.org/team/common.git --connection CONNECTION_ID --confirm` to grant reads. Omit the connection for anonymous access. |
 | `repo add/list/status/remove/takeover/withdraw/push/return`, `sync`, `wip` | Manage branch bindings and hosted changes. Use `wip --mission dev-12 --name project --fork` for a recovery branch. |
 | `thread create/rename/subscribe/mute`, `inbox list/read` | Manage conversations and subscriptions. |
 | `status list/create/update/remove` | List workflow statuses or manage their display names and colors. |

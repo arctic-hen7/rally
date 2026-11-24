@@ -1,3 +1,4 @@
+import { GitRoutes } from './git-routing';
 import { GitConnections } from './git-connections';
 import { ModelSettings, ResourceAccess } from './access';
 import { Webhooks } from './triggers';
@@ -154,6 +155,7 @@ export function Manage({ page, data, edit, act, user, revision, refresh, exit }:
             <div className="page">
                 <h1>Settings</h1>
                 <GitConnections revision={revision} edit={edit} />
+                {(user.owner || user.admin) && <GitRoutes edit={edit} revision={revision} />}
                 {(user.owner || user.admin) && <ModelSettings />}
                 <Section title="Account">
                     <div className="setting-row">

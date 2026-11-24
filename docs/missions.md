@@ -20,7 +20,7 @@ A hosted run searches the missions its dispatcher can read. When another person 
 
 In mission details, add a short checkout name, HTTPS remote, branch and personal Git connection. Every member can operate on that repository through the delegated account. [Git access and handover](git-connections.md)
 
-Each repository is a child of the mission root. Rally fetches periodically and on **Refresh**. Clean, idle checkouts advance by fast-forward. A running agent keeps its working tree while a safe update waits. A changed, divergent, or conflicted checkout keeps its local contents and reports its state above the composer. Multiple agents in a mission share writable files. Fork the mission for independent branches and workspaces.
+Each workspace repository is a child of the mission root. Rally fetches periodically and on **Refresh**. Clean, idle checkouts advance by fast-forward. A running agent keeps its working tree while a safe update waits. A changed, divergent, or conflicted checkout keeps its local contents and reports its state above the composer. Multiple agents in a mission share writable files. Fork the mission for independent branches and workspaces.
 
 For ordinary changes, commit and push. Include “Push immediately after committing unless asked to keep the branch local” in role instructions when appropriate. **WIP commit** can generate a subject using eight recent messages, changed paths and a bounded diff. A normal WIP commit stays local until pushed.
 

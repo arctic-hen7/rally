@@ -10,6 +10,7 @@ export function GitAccess({
     confirmed,
     share,
     pending,
+    readOnly,
     change,
 }: {
     remote: string;
@@ -17,6 +18,7 @@ export function GitAccess({
     confirmed?: boolean;
     share?: boolean;
     pending?: boolean;
+    readOnly?: boolean;
     change: (connection: string, confirm: boolean) => void;
 }) {
     const [list, setList] = useState<Connection[]>([]);
@@ -61,8 +63,8 @@ export function GitAccess({
                         checked={!!confirmed}
                         onChange={(e) => change(connection, e.target.checked)}
                     />
-                    Allow current and future mission members and their hosted agents to fetch and push to this
-                    repository using my connection.
+                    Allow current and future mission members and their hosted agents to{' '}
+                    {readOnly ? 'fetch from' : 'fetch and push to'} this repository using my connection.
                 </label>
             )}
             {error && <small role="alert">{error}</small>}
