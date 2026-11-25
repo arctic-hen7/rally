@@ -1,6 +1,6 @@
 use super::*;
 use anyhow::ensure;
-use std::collections::BTreeMap;
+use rally_teams::{GitRoutes as Routes, rewrite_git_url};
 use url::Url;
 
 // Reject ambiguous path components before URL parsing can normalize them
@@ -51,7 +51,7 @@ fn parse(input: &str) -> Result<Url> {
     );
     let url = Url::parse(&expanded)?;
     ensure!(
-        matches!(url.scheme(), "ssh" | "https")
+        matches!(url.scheme(), "ssh" | "https" | "http")
             && url.host().is_some()
             && url.password().is_none()
             && (url.username().is_empty()
@@ -60,7 +60,7 @@ fn parse(input: &str) -> Result<Url> {
                         .username()
                         .bytes()
                         .all(|c| c.is_ascii_alphanumeric() || b"-_".contains(&c)))),
-        "Use an HTTPS or SSH Git URL without credentials"
+        "Use a Git URL without embedded credentials"
     );
     Ok(url)
 }
@@ -108,6 +108,10 @@ fn aliases(source: &Url, include_ssh: bool) -> Vec<String> {
 }
 
 pub async fn call(app: &App, a: &Actor, op: &str, d: &Value) -> Result<Value> {
+    if op == "routing.resolve" {
+        let upstream = resolve(&app.db, field(d, "remote")?).await?;
+        return Ok(json!({"upstream":upstream}));
+    }
     admin(a)?;
     match op {
         "routing.list" => {
@@ -129,6 +133,10 @@ pub async fn call(app: &App, a: &Actor, op: &str, d: &Value) -> Result<Value> {
         }
         "routing.create" | "routing.update" => {
             let source = parse(field(d, "source")?.trim())?;
+            ensure!(
+                source.scheme() != "http",
+                "Use an HTTPS or SSH source for a hosted rewrite"
+            );
             let upstream = d
                 .get("upstream")
                 .map(|_| field(d, "upstream"))
@@ -161,7 +169,7 @@ pub async fn call(app: &App, a: &Actor, op: &str, d: &Value) -> Result<Value> {
                 .bind(&id)
                 .fetch_all(&mut *tx)
                 .await?;
-            let mut map = BTreeMap::new();
+            let mut map = Routes::new();
             for row in rules {
                 add_rule(
                     &mut map,
@@ -192,7 +200,6 @@ pub async fn call(app: &App, a: &Actor, op: &str, d: &Value) -> Result<Value> {
 }
 
 // The key is a literal Git insteadOf prefix. Prefix rules end at a path separator
-type Routes = BTreeMap<String, (String, bool)>;
 fn add_rule(routes: &mut Routes, source: &str, upstream: &str, scope: &str) -> Result<()> {
     let prefix = scope == "prefix";
     let source = parse(source)?;
@@ -215,21 +222,17 @@ fn add_rule(routes: &mut Routes, source: &str, upstream: &str, scope: &str) -> R
         if let Some(old) = routes.insert(key, value.clone()) {
             ensure!(
                 old == value,
-                "This Git URL already maps to another HTTPS destination"
+                "This Git URL already maps to another Git destination"
             );
         }
     }
     Ok(())
 }
 
-pub async fn worker_env(
-    app: &App,
-    lease: &connections::Lease,
-    repos: &Value,
-) -> Result<Vec<(String, String)>> {
+async fn rules<'e>(db: impl sqlx::PgExecutor<'e>) -> Result<Routes> {
     let mut routes = Routes::new();
     for row in sqlx::query("SELECT source,upstream,scope FROM git_routes")
-        .fetch_all(&app.db)
+        .fetch_all(db)
         .await?
     {
         add_rule(
@@ -239,9 +242,41 @@ pub async fn worker_env(
             &row.get::<String, _>("scope"),
         )?;
     }
+    Ok(routes)
+}
+
+// Resolve only once so an explicit destination is always the final network target
+pub async fn resolve<'e>(db: impl sqlx::PgExecutor<'e>, remote: &str) -> Result<String> {
+    let rules = rules(db).await?;
+    if let Some(upstream) = rewrite_git_url(&rules, remote) {
+        parse(remote)?;
+        let url = parse(&upstream)?;
+        connections::origin(&upstream)?;
+        ensure!(
+            !url.path().trim_matches('/').is_empty(),
+            "Enter a repository URL including its path"
+        );
+        return Ok(upstream);
+    }
+    connections::origin(remote)?;
+    ensure!(
+        Url::parse(remote)?.scheme() == "https",
+        "HTTP and SSH Git remotes require a matching organisation routing rule"
+    );
+    Ok(remote.to_owned())
+}
+
+pub async fn worker_env(
+    app: &App,
+    lease: &connections::Lease,
+    repos: &Value,
+) -> Result<Vec<(String, String)>> {
+    let mut routes = rules(&app.db).await?;
     for repo in repos.as_array().into_iter().flatten() {
         let remote = field(repo, "remote")?;
-        if let Ok(url) = parse(remote) {
+        if rewrite_git_url(&routes, remote).is_none()
+            && let Ok(url) = parse(remote)
+        {
             routes
                 .entry(stem(url.as_str()).to_owned())
                 .or_insert((url.to_string(), false));
@@ -308,10 +343,11 @@ pub async fn request(app: &App, mid: &str, remote: &str) -> Result<()> {
         .bind(mid)
         .execute(&mut *tx)
         .await?;
-    let remotes: Vec<String> = sqlx::query_scalar("SELECT remote FROM repos WHERE mission=$1")
-        .bind(mid)
-        .fetch_all(&mut *tx)
-        .await?;
+    let remotes: Vec<String> =
+        sqlx::query_scalar("SELECT coalesce(upstream,remote) FROM repos WHERE mission=$1")
+            .bind(mid)
+            .fetch_all(&mut *tx)
+            .await?;
     ensure!(
         !remotes.iter().any(|url| identity(url) == key),
         "Retry with the attached repository"

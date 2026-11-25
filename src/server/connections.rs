@@ -5,8 +5,8 @@ use std::{collections::HashMap, sync::Mutex as StdMutex, time::Duration};
 use url::Url;
 
 pub fn origin(remote: &str) -> Result<String> {
-    let url = Url::parse(remote).context("Enter an HTTPS Git URL")?;
-    if url.scheme() != "https"
+    let url = Url::parse(remote).context("Enter an HTTP or HTTPS Git URL")?;
+    if !matches!(url.scheme(), "http" | "https")
         || url.host().is_none()
         || !url.username().is_empty()
         || url.password().is_some()
@@ -15,7 +15,7 @@ pub fn origin(remote: &str) -> Result<String> {
         || remote.contains('\\')
         || remote.chars().any(char::is_control)
     {
-        bail!("Use a credential-free HTTPS Git URL");
+        bail!("Use an HTTP or HTTPS Git URL without embedded credentials");
     }
     Ok(url.origin().ascii_serialization())
 }
@@ -48,7 +48,7 @@ pub async fn validate<'e>(
             "SELECT id FROM git_connections WHERE id=$1 AND owner_id=$2 AND origin=$3 FOR KEY SHARE",
         ).bind(cid).bind(owner).bind(host).fetch_optional(db).await?;
         if selected.is_none() {
-            bail!("Choose one of your Git connections for this HTTPS host");
+            bail!("Choose one of your Git connections for the destination origin");
         }
     }
     Ok(())
@@ -64,6 +64,7 @@ pub enum Scope {
     Job(String),
     Source {
         remote: String,
+        upstream: String,
         owner: String,
         connection: Option<String>,
     },
@@ -131,11 +132,18 @@ impl Lease {
     }
 }
 
-pub fn source(app: &App, remote: &str, owner: &str, connection: Option<&str>) -> Lease {
+pub fn source(
+    app: &App,
+    remote: &str,
+    upstream: &str,
+    owner: &str,
+    connection: Option<&str>,
+) -> Lease {
     Lease::new(
         app,
         Scope::Source {
             remote: remote.into(),
+            upstream: upstream.into(),
             owner: owner.into(),
             connection: connection.map(str::to_owned),
         },
@@ -146,11 +154,12 @@ pub async fn probe(
     app: &App,
     owner: &str,
     remote: &str,
+    upstream: &str,
     connection: Option<&str>,
     reference: &str,
 ) -> Result<()> {
-    validate(&app.db, owner, remote, connection).await?;
-    let lease = source(app, remote, owner, connection);
+    validate(&app.db, owner, upstream, connection).await?;
+    let lease = source(app, remote, upstream, owner, connection);
     let mut cmd = tokio::process::Command::new("git");
     cmd.current_dir(&app.root)
         .envs(lease.env())
@@ -218,15 +227,15 @@ async fn forward(
     } else {
         scope
     };
-    let (remote, owner, connection) = match scope {
+    let (source, remote, owner, connection) = match scope {
         Scope::Mission(mid) if key == mid => {
-            let candidates=sqlx::query("SELECT name,remote,contributor,connection,read_only,(NOT needs_transfer AND can_read(contributor,mission)) AS active FROM repos WHERE mission=$1 AND ($2='@routes' OR name=$2) ORDER BY name")
+            let candidates=sqlx::query("SELECT name,remote,coalesce(upstream,remote) AS target,contributor,connection,read_only,(NOT needs_transfer AND can_read(contributor,mission)) AS active FROM repos WHERE mission=$1 AND ($2='@routes' OR name=$2) ORDER BY name")
                 .bind(&mid).bind(name).fetch_all(&app.db).await?;
             let rows: Vec<_> = candidates
                 .iter()
                 .filter(|row| {
                     routed.as_ref().is_none_or(|url| {
-                        routing::identity(url) == routing::identity(row.get("remote"))
+                        routing::identity(url) == routing::identity(row.get("target"))
                     })
                 })
                 .collect();
@@ -255,7 +264,12 @@ async fn forward(
                     "Multiple Git connections for this repository. Use its named workspace origin"
                 );
             }
-            (row.get::<String, _>("remote"), owner, connection)
+            (
+                row.get::<String, _>("remote"),
+                row.get::<String, _>("target"),
+                owner,
+                connection,
+            )
         }
         Scope::Job(id) if key == id => {
             let candidates=sqlx::query("SELECT j.owner_id,repo FROM jobs j JOIN routines r ON r.id=j.routine AND r.owner_id=j.owner_id CROSS JOIN LATERAL jsonb_array_elements(j.definition->'repos') repo WHERE j.id=$1 AND j.status='working' AND ($2='@routes' OR repo->>'name'=$2) AND r.repos @> jsonb_build_array(repo) AND NOT coalesce((repo->>'needs_connection')::boolean,false)")
@@ -263,12 +277,14 @@ async fn forward(
             let mut grants = Vec::new();
             for row in candidates {
                 let repo: Value = row.get("repo");
-                let remote = field(&repo, "remote")?;
+                let source = field(&repo, "remote")?;
+                let remote = repo["upstream"].as_str().unwrap_or(source);
                 if routed
                     .as_ref()
                     .is_none_or(|url| routing::identity(url) == routing::identity(remote))
                 {
                     grants.push((
+                        source.to_owned(),
                         remote.to_owned(),
                         row.get::<String, _>("owner_id"),
                         repo["connection"]
@@ -279,7 +295,7 @@ async fn forward(
                 }
             }
             let grant = grants.first().context("Access denied")?;
-            if grants.iter().any(|g| g.2 != grant.2) {
+            if grants.iter().any(|g| g.3 != grant.3) {
                 bail!(
                     "Multiple Git connections for this repository. Use its named workspace origin"
                 );
@@ -288,13 +304,17 @@ async fn forward(
         }
         Scope::Source {
             remote,
+            upstream,
             owner,
             connection,
         } if key == "source" && name == "repo" && service == "git-upload-pack" => {
-            (remote, owner, connection)
+            (remote, upstream, owner, connection)
         }
         _ => bail!("Access denied"),
     };
+    if routing::resolve(&app.db, &source).await? != remote {
+        bail!("Hosted Git destination changed. Reconnect this repository before using it");
+    }
     let host = origin(&remote)?;
     if connection.is_none() && service == "git-receive-pack" {
         bail!("Anonymous Git access is read-only");
@@ -333,6 +353,9 @@ async fn forward(
         ));
     }
     let result = request.send().await.context("Git upstream unavailable")?;
+    if result.status().is_redirection() {
+        bail!("Git upstream redirects are disabled");
+    }
     if !result.status().is_success() {
         let status = if result.status().as_u16() == 401 {
             axum::http::StatusCode::FORBIDDEN
@@ -442,6 +465,7 @@ pub async fn selected(
     app: &App,
     actor: &Actor,
     remote: &str,
+    upstream: &str,
     requested: Option<&str>,
 ) -> Result<Option<String>> {
     if let Some(job) = &actor.job {
@@ -449,9 +473,9 @@ pub async fn selected(
             "SELECT DISTINCT nullif(repo->>'connection','') FROM jobs j
              JOIN routines r ON j.routine=r.id AND j.owner_id=r.owner_id
              CROSS JOIN LATERAL jsonb_array_elements(j.definition->'repos') repo
-             WHERE j.id=$1 AND j.status='working' AND r.owner_id=$2 AND repo->>'remote'=$3
+             WHERE j.id=$1 AND j.status='working' AND r.owner_id=$2 AND repo->>'remote'=$3 AND coalesce(repo->>'upstream',repo->>'remote')=$4
              AND r.repos @> jsonb_build_array(repo) AND NOT coalesce((repo->>'needs_connection')::boolean,false)"
-        ).bind(job).bind(&actor.uid).bind(remote).fetch_all(&app.db).await?;
+        ).bind(job).bind(&actor.uid).bind(remote).bind(upstream).fetch_all(&app.db).await?;
         if let [only] = choices.as_slice()
             && requested.is_none()
         {

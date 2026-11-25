@@ -11,7 +11,8 @@ fn directory(value: Option<&str>) -> Result<&str> {
     }
     Ok(p)
 }
-async fn validate_repos(db: &mut sqlx::PgConnection, owner: &str, repos: &Value) -> Result<()> {
+async fn validate_repos(db: &mut sqlx::PgConnection, owner: &str, repos: &Value) -> Result<Value> {
+    let mut validated = Vec::new();
     let mut names = std::collections::HashSet::new();
     for r in repos
         .as_array()
@@ -23,19 +24,24 @@ async fn validate_repos(db: &mut sqlx::PgConnection, owner: &str, repos: &Value)
         if r["needs_connection"] == true {
             bail!("Reconnect the transferred repository or explicitly select anonymous access");
         }
+        let source = field(r, "remote")?;
+        remote(source)?;
+        let upstream = routing::resolve(&mut *db, source).await?;
         connections::validate(
             &mut *db,
             owner,
-            field(r, "remote")?,
+            &upstream,
             r["connection"].as_str().filter(|s| !s.is_empty()),
         )
         .await?;
-        remote(field(r, "remote")?)?;
+        let mut repo = r.clone();
+        repo["upstream"] = json!(upstream);
+        validated.push(repo);
         if field(r, "branch")?.starts_with('-') {
             bail!("Invalid branch");
         }
     }
-    Ok(())
+    Ok(json!(validated))
 }
 
 pub async fn call(app: &App, a: &Actor, op: &str, d: &Value) -> Result<Value> {
@@ -65,7 +71,7 @@ pub async fn call(app: &App, a: &Actor, op: &str, d: &Value) -> Result<Value> {
     };
     if op == "routine.create" {
         let repos = d.get("repos").cloned().unwrap_or(json!([]));
-        validate_repos(&mut tx, &a.uid, &repos).await?;
+        let repos = validate_repos(&mut tx, &a.uid, &repos).await?;
         sqlx::query("INSERT INTO routines(id,name,owner_id,command,repos,directory) VALUES($1,$2,$3,$4,$5,$6)").bind(&rid).bind(field(d,"name")?).bind(&a.uid).bind(field(d,"command")?).bind(repos).bind(directory(d["directory"].as_str())?).execute(&mut *tx).await?;
     }
     let mut r: Value =
@@ -166,8 +172,11 @@ pub async fn call(app: &App, a: &Actor, op: &str, d: &Value) -> Result<Value> {
                     triggers::replace(&mut tx, &rid, &a.uid, list).await?;
                 }
                 if op == "routine.update" {
-                    let repos = d.get("repos").unwrap_or(&r["repos"]);
-                    validate_repos(&mut tx, &a.uid, repos).await?;
+                    let repos = if let Some(repos) = d.get("repos") {
+                        validate_repos(&mut tx, &a.uid, repos).await?
+                    } else {
+                        r["repos"].clone()
+                    };
                     sqlx::query("UPDATE routines SET name=coalesce($2,name),command=coalesce($3,command),repos=$4,directory=$5 WHERE id=$1").bind(&rid).bind(d["name"].as_str()).bind(d["command"].as_str()).bind(repos).bind(directory(d["directory"].as_str().or(r["directory"].as_str()))?).execute(&mut *tx).await?;
                 }
             }

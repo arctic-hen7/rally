@@ -812,6 +812,7 @@ def main():
                 suite.routines()
                 git_connections.contract(suite, wait)
                 git_routing.contract(suite, wait)
+                git_routing.http_rewrites(suite, wait)
                 features.secrets_and_access(suite)
                 features.trigger_contract(suite)
                 features.provider_contract(suite, BIN / "rally-server", ROOT)

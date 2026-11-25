@@ -28,7 +28,9 @@ def worker_probe(data):
         assert all(fetch(url) != 0 for url in aliases)
         return "Read requests checked"
 
-    if fixture == "dependency.git":
+    if data["mode"] == "http":
+        aliases = [remote, "git@code.example.test:team/" + fixture, "https://code.example.test/team/" + fixture]
+    elif fixture == "dependency.git":
         aliases.append("git@git.route.test:team/renamed.git")
     for url in aliases:
         assert fetch(url) == 0, url
@@ -68,7 +70,7 @@ def contract(s, wait):
         "upstream": remote,
         "scope": "repository",
     })["id"]
-    api("routing.create", dict(scope, source="https://other.test", upstream="http://other.test"), denied=True)
+    api("routing.create", dict(scope, source="https://other.test", upstream="ftp://other.test"), denied=True)
     mid = api("mission.create", {"title": "Routed dependency checks", "topic": "dev"})["id"]
     api("member.add", {"mission": mid, "principal": s.bob_id})
     data = {"mission": mid, "remote": remote}
@@ -151,3 +153,86 @@ def contract(s, wait):
     api("routing.remove", {"id": narrower})
     api("routing.remove", {"id": rule})
     print("Passed hosted SSH, SCP and HTTPS routes, isolated routine access, read-only grants and local open", flush=True)
+
+
+def http_rewrites(s, wait):
+    from git_forge import Forge
+    forge = Forge(s.root, tls=False)
+    try:
+        check_http_rewrites(s, forge, wait)
+    finally:
+        forge.close()
+
+
+def check_http_rewrites(s, forge, wait):
+    api = s.req
+    prefix = "https://code.example.test/team/"
+    source = prefix + "project.git"
+    upstream = forge.origin + "/project.git"
+    cid = api("connection.create", {
+        "name": "Internal Git", "host": forge.origin, "username": "alice", "token": "alice-fixture",
+    })["id"]
+    mid = api("mission.create", {"topic": "dev", "title": "Hosted HTTP transport"})["id"]
+    binding = dict(mission=mid, remote=source, name="project", branch="main", connection=cid, confirm=True)
+    api("repo.attach", dict(binding, remote=upstream), denied=True)
+    rule = api("routing.create", {"source": prefix, "upstream": forge.origin, "scope": "prefix"})["id"]
+    assert api("routing.resolve", {"remote": "git@code.example.test:team/project.git"})["upstream"] == upstream
+    tls_only = api("connection.create", {
+        "name": "Same port over TLS", "host": forge.origin.replace("http:", "https:"),
+        "username": "alice", "token": "alice-fixture",
+    })["id"]
+    api("repo.add", dict(binding, connection=tls_only), denied=True)
+    api("repo.add", binding)
+    checkout = s.root / "data/missions" / mid / "project"
+    skill_dir = checkout / "http-fixture"
+    skill_dir.mkdir()
+    (skill_dir / "SKILL.md").write_text("---\nname: http-fixture\ndescription: Transport check\n---\nRead the fixture.\n")
+    s.git(checkout, "add", "http-fixture/SKILL.md")
+    s.git(checkout, "commit", "-m", "Exercise HTTP push")
+    api("repo.push", binding)
+    assert ("alice", "/project.git/git-receive-pack", "") in forge.calls
+    row = api("mission.show", binding)["repos"][0]
+    assert row["remote"] == source and row["upstream"] == upstream
+    local_env = dict(s.env, GIT_CONFIG_COUNT="1", GIT_CONFIG_KEY_0=f"url.{s.root}/git/.insteadOf",
+                     GIT_CONFIG_VALUE_0=prefix)
+    local = pathlib.Path(s.cli("open", mid, "--print-path", env=local_env))
+    assert s.git(local / "project", "config", "--get", "remote.origin.url") == source
+
+    ssh = "git@code.example.test:team/project.git"
+    skill = api("skill.import", dict(name="http-fixture", remote=ssh, path="http-fixture", connection=cid))["id"]
+    assert "Read the fixture" in api("skill.show", {"skill": skill})["body"]
+    job = api("routine.create", {
+        "name": "Internal HTTP workspace",
+        "repos": [dict(name="project", remote=ssh, branch="main", connection=cid)],
+        "command": "git ls-remote --exit-code https://code.example.test/team/project.git HEAD",
+    })["id"]
+    api("routine.trigger", {"routine": job})
+
+    def job_done():
+        jobs = api("routine.show", {"routine": job})["jobs"]
+        assert not jobs or jobs[0]["status"] != "failed", jobs
+        return jobs and jobs[0]["status"] == "done"
+
+    wait(job_done, "HTTP routine fetch did not finish")
+    dep = forge.origin + "/dependency.git"
+    readonly = api("repo.attach", dict(binding, remote=dep))["name"]
+    payload = json.dumps(dict(mode="http", fixture="dependency.git", origin=forge.origin, name=readonly))
+    rid = api("post", {"thread": mid, "body": "ROUTING_FIXTURE " + payload,
+                       "mentions": [s.agent], "confirm": True})["runs"][0]
+    def done():
+        state = api("run.show", {"run": rid})
+        assert state["status"] != "failed", state.get("error")
+        return state["status"] == "done"
+    wait(done, "Hosted HTTP dependency probe did not finish")
+    assert all("receive-pack" not in (path + query) for _, path, query in forge.calls if "dependency.git" in path)
+
+    api("routing.remove", {"id": rule})
+    before = len(forge.requests)
+    api("repo.push", binding, denied=True)
+    s.forge.redirects["/redirect.git/info/refs"] = upstream + "/info/refs?service=git-upload-pack"
+    api("repo.add", dict(binding, name="redirect", remote=s.forge.origin + "/redirect.git",
+                         connection=s.git_connection), denied=True)
+    assert "/redirect.git/info/refs" in s.forge.requests
+    api("repo.add", dict(binding, name="tls", remote=upstream.replace("http:", "https:"), connection=None), denied=True)
+    assert len(forge.requests) == before
+    print("Passed explicit HTTP rewrites, local clone URLs, read-only delegation and redirect/TLS rejection", flush=True)

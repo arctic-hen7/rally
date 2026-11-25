@@ -271,11 +271,15 @@ pub async fn verify_binding(
     base: &str,
     cid: Option<&str>,
     confirm: bool,
-) -> Result<Option<String>> {
+) -> Result<(String, Option<String>)> {
     let branch = field(binding, "branch")?;
     let remote = field(binding, "remote")?;
     slug(field(binding, "name")?)?;
-    let cid = connections::selected(app, a, remote, cid).await?;
+    if remote.to_ascii_lowercase().starts_with("http:") {
+        bail!("Enter the original SSH or HTTPS clone URL for a workspace repository");
+    }
+    let upstream = routing::resolve(&app.db, remote).await?;
+    let cid = connections::selected(app, a, remote, &upstream, cid).await?;
     if cid.is_some() && !confirm {
         bail!(
             "Confirm that all present and future mission members and hosted agents may use your Git connection for this repository"
@@ -295,11 +299,12 @@ pub async fn verify_binding(
         app,
         &a.uid,
         remote,
+        &upstream,
         cid.as_deref(),
         &format!("refs/heads/{base}"),
     )
     .await?;
-    Ok(cid)
+    Ok((upstream, cid))
 }
 
 pub async fn call(app: &App, a: &Actor, op: &str, d: &Value) -> Result<Value> {
@@ -361,16 +366,17 @@ pub async fn call(app: &App, a: &Actor, op: &str, d: &Value) -> Result<Value> {
                 Some(field(&binding, "branch")?)
             };
             let cid = d["connection"].as_str().filter(|v| !v.is_empty());
-            let cid = if let Some(branch) = branch {
+            let (upstream, cid) = if let Some(branch) = branch {
                 let base = binding["status"]["fork_from"].as_str().unwrap_or(branch);
                 verify_binding(app, a, &binding, base, cid, d["confirm"] == true).await?
             } else {
-                let cid = connections::selected(app, a, remote, cid).await?;
+                let upstream = routing::resolve(&app.db, remote).await?;
+                let cid = connections::selected(app, a, remote, &upstream, cid).await?;
                 if cid.is_some() && d["confirm"] != true {
                     bail!("Confirm sharing read access with this mission");
                 }
-                connections::probe(app, &a.uid, remote, cid.as_deref(), "").await?;
-                cid
+                connections::probe(app, &a.uid, remote, &upstream, cid.as_deref(), "").await?;
+                (upstream, cid)
             };
             if op == "repo.add" && root.join(name).exists() {
                 let saved = command(
@@ -408,15 +414,15 @@ pub async fn call(app: &App, a: &Actor, op: &str, d: &Value) -> Result<Value> {
             {
                 bail!("Access denied");
             }
-            connections::validate(&mut *tx, &a.uid, remote, cid.as_deref()).await?;
+            connections::validate(&mut *tx, &a.uid, &upstream, cid.as_deref()).await?;
             sqlx::query("SELECT id FROM missions WHERE id=$1 FOR UPDATE")
                 .bind(&mid)
                 .execute(&mut *tx)
                 .await?;
-            let key = routing::identity(remote);
+            let key = routing::identity(&upstream);
             if op != "repo.takeover" {
                 let existing =
-                    sqlx::query("SELECT name,remote,read_only FROM repos WHERE mission=$1")
+                    sqlx::query("SELECT name,coalesce(upstream,remote) AS remote,read_only FROM repos WHERE mission=$1")
                         .bind(&mid)
                         .fetch_all(&mut *tx)
                         .await?;
@@ -434,14 +440,14 @@ pub async fn call(app: &App, a: &Actor, op: &str, d: &Value) -> Result<Value> {
                         }
                     }
                 }
-                sqlx::query("INSERT INTO repos(mission,name,remote,branch,contributor,connection,needs_transfer) VALUES($1,$2,$3,$4,$5,$6,false)").bind(&mid).bind(name).bind(remote).bind(branch).bind(&a.uid).bind(cid).execute(&mut *tx).await?;
+                sqlx::query("INSERT INTO repos(mission,name,remote,branch,contributor,connection,upstream,needs_transfer) VALUES($1,$2,$3,$4,$5,$6,$7,false)").bind(&mid).bind(name).bind(remote).bind(branch).bind(&a.uid).bind(cid).bind(&upstream).execute(&mut *tx).await?;
                 sqlx::query("DELETE FROM git_requests WHERE mission=$1 AND identity=$2")
                     .bind(&mid)
                     .bind(key)
                     .execute(&mut *tx)
                     .await?;
             } else {
-                sqlx::query("UPDATE repos SET contributor=$3,connection=$4,needs_transfer=false WHERE mission=$1 AND name=$2").bind(&mid).bind(name).bind(&a.uid).bind(cid).execute(&mut *tx).await?;
+                sqlx::query("UPDATE repos SET contributor=$3,connection=$4,upstream=$5,needs_transfer=false WHERE mission=$1 AND name=$2").bind(&mid).bind(name).bind(&a.uid).bind(cid).bind(&upstream).execute(&mut *tx).await?;
             }
             tx.commit().await?;
             let _ = app.events.send(mid.clone());

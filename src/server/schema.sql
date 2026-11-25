@@ -168,9 +168,11 @@ ALTER TABLE skills ADD COLUMN IF NOT EXISTS git_owner text REFERENCES people,
     ADD COLUMN IF NOT EXISTS last_fetch timestamptz;
 ALTER TABLE repos ALTER COLUMN branch DROP NOT NULL;
 ALTER TABLE repos ADD COLUMN IF NOT EXISTS read_only boolean GENERATED ALWAYS AS (branch IS NULL) STORED;
+ALTER TABLE repos ADD COLUMN IF NOT EXISTS upstream text;
+ALTER TABLE skills ADD COLUMN IF NOT EXISTS upstream text;
 CREATE OR REPLACE VIEW repo_details AS
     SELECT r.mission,r.name,r.remote,r.branch,r.recovery,r.status,r.contributor,r.connection,r.needs_transfer,
-        p.name AS contributor_name,r.read_only FROM repos r LEFT JOIN people p ON p.id=r.contributor;
+        p.name AS contributor_name,r.read_only,coalesce(r.upstream,r.remote) AS upstream FROM repos r LEFT JOIN people p ON p.id=r.contributor;
 
 CREATE OR REPLACE FUNCTION suspend_repo_access() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN

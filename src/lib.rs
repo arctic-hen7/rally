@@ -80,6 +80,32 @@ pub fn write_json(path: &Path, data: &Value) -> Result<()> {
     Ok(())
 }
 
+pub type GitRoutes = std::collections::BTreeMap<String, (String, bool)>;
+
+pub fn rewrite_git_url(routes: &GitRoutes, original: &str) -> Option<String> {
+    let original = original.trim_end_matches('/');
+    let stem = original.strip_suffix(".git").unwrap_or(original);
+    let (source, (target, prefix)) = routes
+        .iter()
+        .filter(|(source, (_, prefix))| {
+            if *prefix {
+                original.starts_with(source.as_str())
+            } else {
+                stem == source.as_str()
+            }
+        })
+        .max_by_key(|(source, _)| source.len())?;
+    Some(if *prefix {
+        format!(
+            "{}/{}",
+            target.trim_end_matches('/'),
+            &original[source.len()..]
+        )
+    } else {
+        target.clone()
+    })
+}
+
 pub fn remote(value: &str) -> Result<&str> {
     if value.starts_with('-') || value.contains("::") || value.chars().any(char::is_control) {
         bail!("Invalid Git remote");

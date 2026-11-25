@@ -40,17 +40,17 @@ async fn git(dir: &Path, env: &[(String, String)], args: &[&str]) -> Result<Vec<
     }
     Ok(out.stdout)
 }
-async fn load(app: &App, sid: &str, reconnect: Option<(&str, Option<&str>)>) -> Result<()> {
+async fn load(app: &App, sid: &str, reconnect: Option<(&str, Option<&str>, &str)>) -> Result<()> {
     let _guard = app.skill_lock.lock().await;
     let mut tx = app.db.begin().await?;
-    if let Some((owner, Some(connection))) = reconnect {
+    if let Some((owner, Some(connection), _)) = reconnect {
         sqlx::query("SELECT id FROM git_connections WHERE id=$1 AND owner_id=$2 FOR KEY SHARE")
             .bind(connection)
             .bind(owner)
             .fetch_one(&mut *tx)
             .await?;
     }
-    let s: Value = sqlx::query_scalar(
+    let mut s: Value = sqlx::query_scalar(
         "SELECT to_jsonb(s)-'files' FROM skills s WHERE id=$1 AND remote IS NOT NULL FOR UPDATE",
     )
     .bind(sid)
@@ -59,15 +59,19 @@ async fn load(app: &App, sid: &str, reconnect: Option<(&str, Option<&str>)>) -> 
     if s["git_paused"] == true && reconnect.is_none() {
         return Ok(());
     }
-    if let Some((owner, connection)) = reconnect {
-        sqlx::query("UPDATE skills SET git_owner=$2,connection=$3,git_paused=false WHERE id=$1")
-            .bind(sid)
-            .bind(owner)
-            .bind(connection)
-            .execute(&mut *tx)
-            .await?;
+    if let Some((owner, connection, upstream)) = reconnect {
+        s["upstream"] = json!(upstream);
+        sqlx::query(
+            "UPDATE skills SET git_owner=$2,connection=$3,upstream=$4,git_paused=false WHERE id=$1",
+        )
+        .bind(sid)
+        .bind(owner)
+        .bind(connection)
+        .bind(upstream)
+        .execute(&mut *tx)
+        .await?;
     }
-    let (owner, connection) = reconnect.unwrap_or((
+    let (owner, connection) = reconnect.map(|(o, c, _)| (o, c)).unwrap_or((
         s["git_owner"].as_str().unwrap_or(field(&s, "creator")?),
         s["connection"].as_str(),
     ));
@@ -111,7 +115,13 @@ async fn fetch_snapshot(
     if branch.starts_with('-') {
         bail!("Invalid skill ref");
     }
-    let lease = connections::source(app, url, owner, connection);
+    let lease = connections::source(
+        app,
+        url,
+        s["upstream"].as_str().unwrap_or(url),
+        owner,
+        connection,
+    );
     git(
         &dir,
         &lease.env(),
@@ -208,16 +218,17 @@ pub async fn call(app: &App, a: &Actor, op: &str, d: &Value) -> Result<Value> {
         "skill.create"|"skill.import"=>{
             personal(a)?;let name=slug(field(d,"name")?)?;if name=="rally"{bail!("The rally skill is built in");}
             let sid=id("sk");
-            let cid=if op=="skill.import"{
+            let (upstream,cid)=if op=="skill.import"{
                 let url=field(d,"remote")?;
-                let cid=connections::selected(app,a,url,d["connection"].as_str().filter(|s|!s.is_empty())).await?;
-                connections::validate(&app.db,&a.uid,url,cid.as_deref()).await?;
-                cid
-            }else{field(d,"body")?;field(d,"description")?;if d.get("remote").is_some(){bail!("Use skill import for a Git source");}None};
+                let upstream=routing::resolve(&app.db,url).await?;
+                let cid=connections::selected(app,a,url,&upstream,d["connection"].as_str().filter(|s|!s.is_empty())).await?;
+                connections::validate(&app.db,&a.uid,&upstream,cid.as_deref()).await?;
+                (Some(upstream),cid)
+            }else{field(d,"body")?;field(d,"description")?;if d.get("remote").is_some(){bail!("Use skill import for a Git source");}(None,None)};
             let _guard=if op=="skill.import"{Some(app.skill_lock.lock().await)}else{None};
             let mut tx=app.db.begin().await?;
-            let source: Value=sqlx::query_scalar("INSERT INTO skills AS s(id,name,body,remote,ref,path,creator,description,private,git_owner,connection) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$7,$10) RETURNING to_jsonb(s)-'files'")
-                .bind(&sid).bind(name).bind(opt(d,"body")).bind(d["remote"].as_str()).bind(d["ref"].as_str()).bind(d["path"].as_str()).bind(&a.uid).bind(opt(d,"description")).bind(d["private"]==true).bind(&cid).fetch_one(&mut *tx).await?;
+            let source: Value=sqlx::query_scalar("INSERT INTO skills AS s(id,name,body,remote,ref,path,creator,description,private,git_owner,connection,upstream) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$7,$10,$11) RETURNING to_jsonb(s)-'files'")
+                .bind(&sid).bind(name).bind(opt(d,"body")).bind(d["remote"].as_str()).bind(d["ref"].as_str()).bind(d["path"].as_str()).bind(&a.uid).bind(opt(d,"description")).bind(d["private"]==true).bind(&cid).bind(upstream).fetch_one(&mut *tx).await?;
             if op=="skill.import" && let Err(error)=fetch_snapshot(app,&mut tx,&source,&a.uid,cid.as_deref()).await{
                 tx.rollback().await?;
                 let _=tokio::fs::remove_dir_all(app.root.join("library").join(&sid)).await;
@@ -232,10 +243,11 @@ pub async fn call(app: &App, a: &Actor, op: &str, d: &Value) -> Result<Value> {
             let s=one(&app.db,"SELECT to_jsonb(s)-'files' FROM skills s WHERE id=$1 AND remote IS NOT NULL",&[sid]).await?;
             let cid=d["connection"].as_str().filter(|s|!s.is_empty());
             let remote=field(&s,"remote")?;
-            let choice=connections::selected(app,a,remote,cid).await?;
+            let upstream=routing::resolve(&app.db,remote).await?;
+            let choice=connections::selected(app,a,remote,&upstream,cid).await?;
             let cid=choice.as_deref();
-            connections::validate(&app.db,&a.uid,remote,cid).await?;
-            load(app,sid,Some((&a.uid,cid))).await?;
+            connections::validate(&app.db,&a.uid,&upstream,cid).await?;
+            load(app,sid,Some((&a.uid,cid,&upstream))).await?;
             Ok(json!({"id":sid}))
         }
         "skill.edit"=>{

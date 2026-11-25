@@ -35,10 +35,10 @@ pub async fn call(app: &App, a: &Actor, op: &str, d: &Value) -> Result<Value> {
             sqlx::query("INSERT INTO threads(id,mission,title,kind) VALUES($1,$2,'Main','main')").bind(&tid).bind(&mid).execute(&mut *tx).await?;
             sqlx::query("INSERT INTO participants VALUES($1,$2)").bind(&tid).bind(&a.uid).execute(&mut *tx).await?;
             if let Some(parent)=&from{
-                sqlx::query("INSERT INTO repos(mission,name,remote,branch,status) SELECT $1,name,remote,CASE WHEN NOT read_only THEN $2 END,CASE WHEN read_only THEN '{}'::jsonb ELSE jsonb_build_object('fork_from',branch) END FROM repos WHERE mission=$3").bind(&mid).bind(&mid).bind(parent).execute(&mut *tx).await?;
+                sqlx::query("INSERT INTO repos(mission,name,remote,upstream,branch,status) SELECT $1,name,remote,upstream,CASE WHEN NOT read_only THEN $2 END,CASE WHEN read_only THEN '{}'::jsonb ELSE jsonb_build_object('fork_from',branch) END FROM repos WHERE mission=$3").bind(&mid).bind(&mid).bind(parent).execute(&mut *tx).await?;
             }
-            for (r,cid) in verified{
-                sqlx::query("INSERT INTO repos(mission,name,remote,branch,contributor,connection,needs_transfer) VALUES($1,$2,$3,$4,$5,$6,false)").bind(&mid).bind(field(r,"name")?).bind(field(r,"remote")?).bind(field(r,"branch")?).bind(&a.uid).bind(cid).execute(&mut *tx).await?;
+            for (r,(upstream,cid)) in verified{
+                sqlx::query("INSERT INTO repos(mission,name,remote,branch,contributor,connection,upstream,needs_transfer) VALUES($1,$2,$3,$4,$5,$6,$7,false)").bind(&mid).bind(field(r,"name")?).bind(field(r,"remote")?).bind(field(r,"branch")?).bind(&a.uid).bind(cid).bind(upstream).execute(&mut *tx).await?;
             }
             tx.commit().await?;Ok(json!({"id":mid,"thread":tid}))
         }

@@ -10,8 +10,10 @@ from urllib.parse import urlsplit
 
 
 class Forge:
-    def __init__(self, root, address=("127.0.0.1", 0)):
+    def __init__(self, root, address=("127.0.0.1", 0), tls=True):
         self.calls = []
+        self.requests = []
+        self.redirects = {}
         self.passwords = {"alice": "alice-fixture", "bob": "bob-fixture"}
         self.ca = root / "forge-ca.pem"
         key = root / "forge-key.pem"
@@ -67,7 +69,7 @@ class Forge:
                 "copy",
             ],
         ]
-        for command in [] if cert.is_file() else commands:
+        for command in [] if cert.is_file() or not tls else commands:
             subprocess.run(
                 ["openssl", *command],
                 stdout=subprocess.DEVNULL,
@@ -87,6 +89,12 @@ class Forge:
                     if self.headers.get("Authorization") == "Basic " + basic:
                         user = name
                 url = urlsplit(self.path)
+                forge.requests.append(url.path)
+                if url.path in forge.redirects:
+                    self.send_response(307)
+                    self.send_header("Location", forge.redirects[url.path])
+                    self.end_headers()
+                    return
                 if not user and not url.path.startswith("/public.git/"):
                     self.send_error(401)
                     return
@@ -120,10 +128,12 @@ class Forge:
             do_POST = serve
 
         self.server = http.server.ThreadingHTTPServer(address, Handler)
-        tls = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-        tls.load_cert_chain(cert, key)
-        self.server.socket = tls.wrap_socket(self.server.socket, server_side=True)
-        self.origin = f"https://127.0.0.1:{self.server.server_port}"
+        if tls:
+            context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+            context.load_cert_chain(cert, key)
+            self.server.socket = context.wrap_socket(self.server.socket, server_side=True)
+        scheme = "https" if tls else "http"
+        self.origin = f"{scheme}://127.0.0.1:{self.server.server_port}"
         threading.Thread(target=self.server.serve_forever, daemon=True).start()
 
     def close(self):

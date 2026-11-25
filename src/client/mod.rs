@@ -213,11 +213,7 @@ const OPS: &[(&str, &str, &str)] = &[
     ("token.create", "name", "Issue a personal API token"),
     ("token.list", "", "List personal tokens"),
     ("token.revoke", "id", "Revoke a token"),
-    (
-        "connection.list",
-        "",
-        "List your personal HTTPS Git connections",
-    ),
+    ("connection.list", "", "List your personal Git connections"),
     (
         "connection.create",
         "name host username token-stdin",
@@ -257,7 +253,7 @@ const OPS: &[(&str, &str, &str)] = &[
     (
         "routing.create",
         "source upstream scope",
-        "Route a repository or prefix to HTTPS",
+        "Route a repository or prefix to a hosted Git destination",
     ),
     (
         "routing.update",
@@ -593,6 +589,12 @@ pub fn main() -> Result<()> {
             std::fs::read_to_string(file)?
         });
     }
+    if op == "connection.create" {
+        warn_http(opt(&d, "host"));
+    }
+    if matches!(op.as_str(), "routing.create" | "routing.update") {
+        warn_http(opt(&d, "upstream"));
+    }
     if matches!(op.as_str(), "connection.create" | "connection.update") {
         d["token"] = json!(if d["token-stdin"] == true {
             stdin()?.trim_end().to_owned()
@@ -646,6 +648,20 @@ pub fn main() -> Result<()> {
                 .or(std::env::var("RALLY_MISSION").ok())
                 .or(local()?)
         );
+    }
+    if matches!(
+        op.as_str(),
+        "mission.create"
+            | "repo.add"
+            | "repo.attach"
+            | "repo.takeover"
+            | "routine.create"
+            | "routine.update"
+            | "skill.import"
+            | "skill.reconnect"
+            | "connection.update"
+    ) {
+        warn_git_destinations(&client, &op, &d);
     }
     let result = match op.as_str() {
         "secrets.pull" | "secrets.push" => secrets::sync(&client, &op, &d)?,
@@ -758,6 +774,52 @@ pub fn main() -> Result<()> {
     };
     print_result(&result, as_json)
 }
+fn warn_http(value: &str) {
+    if let Ok(url) = url::Url::parse(value)
+        && url.scheme() == "http"
+    {
+        eprintln!(
+            "Warning: Unencrypted HTTP Git destination {}. Repository data and any credentials sent there can be intercepted.",
+            url.origin().ascii_serialization()
+        );
+    }
+}
+
+fn warn_git_destinations(client: &Client, op: &str, d: &Value) {
+    let mut repos = d["repos"].as_array().cloned().unwrap_or_default();
+    if d["remote"].is_string() {
+        repos.push(d.clone());
+    }
+    if op == "repo.takeover"
+        && let Ok(list) = client.api("repo.list", d)
+        && let Some(repo) = list
+            .as_array()
+            .and_then(|rs| rs.iter().find(|r| r["name"] == d["name"]))
+    {
+        repos.push(repo.clone());
+    }
+    if op == "skill.reconnect"
+        && let Ok(skill) = client.api("skill.show", d)
+    {
+        repos.push(skill);
+    }
+    if op == "connection.update"
+        && let Ok(list) = client.api("connection.list", &json!({}))
+        && let Some(connection) = list
+            .as_array()
+            .and_then(|cs| cs.iter().find(|c| c["id"] == d["connection"]))
+    {
+        warn_http(opt(connection, "origin"));
+    }
+    for repo in repos {
+        if let Some(remote) = repo["remote"].as_str()
+            && let Ok(route) = client.api("routing.resolve", &json!({"remote":remote}))
+        {
+            warn_http(opt(&route, "upstream"));
+        }
+    }
+}
+
 fn secret_input(label: &str) -> Result<String> {
     eprint!("{label}: ");
     io::stderr().flush()?;
