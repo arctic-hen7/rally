@@ -1,6 +1,6 @@
 # Git connections
 
-Open **Settings → Git connections → New connection**. Enter a display name, the HTTPS forge host (including a nonstandard port if needed), the Git username expected by the forge and a personal access token. Use the repository's HTTPS clone URL. Select a token with read access for skills and read/write access for repositories you intend to push to. You can keep multiple accounts on one forge. Select **Anonymous** for public read-only access.
+Open **Settings → Git connections → New connection**. Enter a display name, the hosted forge origin (including its scheme and any nonstandard port), the Git username expected by the forge and a personal access token. HTTPS is the default for a bare hostname. Select a token with read access for skills and read/write access for repositories you intend to push to. You can keep multiple accounts on one forge. Select **Anonymous** for public read-only access.
 
 ## Share a repository with a mission
 
@@ -17,7 +17,7 @@ git push origin HEAD
 
 **Take over** checks the replacement contributor's own access. **Withdraw my access** pauses remote operations and preserves files and uncommitted work. When a contributor loses effective mission membership through direct removal, group changes or admin demotion, Rally shows which repositories will need a new contributor before applying the change. Rejoining the mission still requires an explicit takeover. A fork copies repository definitions and requires fresh delegation for the new mission.
 
-Local `rally open` clones and fetches from the upstream URL using your computer's Git configuration. If one repository is inaccessible, the CLI reports its checkout name and contributor, then continues with the others. Obtain access from the forge and rerun `rally open`.
+Local `rally open` clones and fetches from the original clone URL using your computer's Git configuration. If one repository is inaccessible, the CLI reports its checkout name and contributor, then continues with the others. Obtain access from the forge and rerun `rally open`.
 
 ## Skills and routines
 
@@ -48,13 +48,21 @@ The CLI prompts for a token on create and update. For automation, pipe the token
 
 ## Private dependencies in hosted missions
 
-An owner or admin can add a rule in **Settings → Private repository URLs**. For example, use `git@git.example.org:team/` as the source, select **Prefix**, and set the destination to `https://git.example.org/team/`. A fetch of `git@git.example.org:team/common.git` will use the same mission grant as a fetch of `https://git.example.org/team/common.git`. Use the destination URL when attaching the repository and selecting a connection. Use **Single repository** to match just one path. On leaving the source field Rally suggests a scope and HTTPS destination. Edit the destination for a different hostname, namespace or HTTPS port.
+An owner or admin can add a rule in **Settings → Private repository URLs**. For example, use `git@git.example.org:team/` as the source, select **Prefix**, and set the destination to `https://git.example.org/team/`. A fetch of `git@git.example.org:team/common.git` will use the same mission grant as a fetch of `https://git.example.org/team/common.git`. When attaching a workspace repository, enter the original clone URL and select a connection for the hosted destination. Use **Single repository** to match just one path. On leaving the source field Rally suggests a scope and HTTPS destination. Edit the destination for a different hostname, namespace, scheme or port.
 
 Hosted Git uses the most specific matching path. A prefix covers its descendants. A repository matches with or without its final `.git`. Rally also routes HTTPS URLs of repositories already attached to the workspace. Each grant belongs to one mission and one upstream repository. If the same remote has multiple workspace connections, use the named checkout's `origin` to select its connection explicitly. A routine can use the repositories declared in its own workspace. A mission run dispatched by that routine uses the mission's grants.
 
 The first hosted read of a matching URL without a grant raises **Git read access requested** in the mission and its members' inboxes. This includes public repositories under a managed prefix. Choose **Add to mission (read-only)**, select your Git connection (or anonymous access for a public repo), then retry the fetch. **Dismiss** silences repeated requests for that URL. You can attach it later from mission details. A dependency attachment has no working directory or tracked branch. Rally checks the grant on each Git request and refuses both push discovery and the push itself. Already downloaded objects may remain in a tool's cache after access is withdrawn.
 
 To develop the dependency, add it as a workspace repository with an explicit directory, branch and connection. This replaces the read-only attachment. Membership removal, withdrawal and connection handover apply to both kinds of attachment. Local `rally open` clones only workspace repositories using the developer's own Git configuration and credentials.
+
+## Using an internal HTTP forge
+
+In **Settings → Private repository URLs**, set the source to the team’s usual SSH or HTTPS clone prefix, for example `git@git.example.org:team/`. Enter `http://gitea:3000/team/` as the hosted destination and save the rule. A red warning identifies the cleartext hop before saving. An explicit HTTPS source can also point to HTTP. The server needs network access to the forge, typically by its service name on a shared container network.
+
+Create a Git connection with the full origin `http://gitea:3000`, then attach the original clone URL to the mission. Hosted fetches and pushes use the connection for that exact scheme, hostname and port. The forge receives repository data and any token in cleartext on this hop. Use it on a trusted network. An anonymous read sends no token. Ordinary repositories without a matching rewrite still require HTTPS.
+
+`rally open` uses the original clone URL and local Git credentials. Read-only attachments stay on the server. Changing a rule to another repository or origin requires a fresh delegation for existing grants. Use **Take over** for a mission repository, reconnect an imported skill, or update the routine’s workspace. Rally rejects upstream redirects and never retries a failed TLS connection over HTTP.
 
 ## Hosted Git clients
 

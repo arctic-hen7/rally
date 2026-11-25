@@ -1,6 +1,39 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Plus } from 'lucide-react';
+import { Plus, TriangleAlert } from 'lucide-react';
 import { api, Data, Form, Section } from './ui';
+
+function httpOrigin(value?: string) {
+    try {
+        const url = new URL(value || '');
+        if (url.protocol === 'http:') return url.origin;
+    } catch {}
+}
+
+export function TransportWarning({ url, credentials = true }: { url?: string; credentials?: boolean }) {
+    const origin = httpOrigin(url);
+    if (!origin) return null;
+    return (
+        <div className="git-transport-warning" role="alert">
+            <TriangleAlert aria-hidden="true" />
+            <div>
+                <strong>Unencrypted Git destination</strong>
+                <p>
+                    Rally will send{' '}
+                    {credentials ? 'repository data and any Git credentials used here' : 'repository data'} to{' '}
+                    <code>{origin}</code> over HTTP. Anyone able to intercept the connection could{' '}
+                    {credentials
+                        ? 'read the credentials or alter the Git traffic'
+                        : 'read or alter the Git traffic'}
+                    .
+                </p>
+            </div>
+        </div>
+    );
+}
+
+export function TransportLabel({ url }: { url?: string }) {
+    return httpOrigin(url) ? <span className="git-transport-label">Unencrypted HTTP</span> : null;
+}
 
 function suggest(source: string) {
     const raw = source.trim();
@@ -47,7 +80,7 @@ export function RouteFields({ data, change }: { data: Data; change: (data: Data)
                 />
             </label>
             <label>
-                HTTPS destination
+                Hosted destination URL
                 <input
                     required
                     type="url"
@@ -59,6 +92,7 @@ export function RouteFields({ data, change }: { data: Data; change: (data: Data)
                     }}
                 />
             </label>
+            <TransportWarning url={data.upstream} />
             <label>
                 Match
                 <select
@@ -117,7 +151,8 @@ export function GitRoutes({ edit, revision }: { edit: (form: Form) => void; revi
                 <div className="trigger-card" key={rule.id}>
                     <strong>{rule.source}</strong>
                     <small>
-                        {rule.scope === 'prefix' ? 'Prefix' : 'Repository'} → {rule.upstream}
+                        {rule.scope === 'prefix' ? 'Prefix' : 'Repository'} → {rule.upstream}{' '}
+                        <TransportLabel url={rule.upstream} />
                     </small>
                     <div className="button-wrap">
                         <button onClick={() => open(rule)}>Edit</button>

@@ -36,7 +36,7 @@ The deployment Compose file reads the installation's `.env` into the server. Set
 | `DATABASE_URL` | An existing PostgreSQL database. With an external database run `podman-compose -p rally up -d --no-deps server`. The database role needs permission to create and update tables in this database. The Compose file still requires its DB password variable for interpolation. |
 | `RALLY_LISTEN` | Host interface and port to publish, default `127.0.0.1:8787`. |
 
-The release server image includes the web app and the pinned embedding model. Workers need access to Rally and your configured model provider. The server needs HTTPS access to Git remotes. Users configure their forge accounts in Settings under **Git connections**. For a private CA, put its PEM bundle under the host data directory and set `RALLY_GIT_CA_FILE` to its server-visible path, for example `/var/lib/rally/forge-ca.pem`, before starting the server.
+The release server image includes the web app and the pinned embedding model. Workers need access to Rally and your configured model provider. The server needs network access to Git remotes. For a same-network forge, an organisation routing rule can explicitly select an HTTP destination. Users configure their forge accounts in Settings under **Git connections**. For a private CA, put its PEM bundle under the host data directory and set `RALLY_GIT_CA_FILE` to its server-visible path, for example `/var/lib/rally/forge-ca.pem`, before starting the server. [Hosted Git configuration](git-connections.md#using-an-internal-http-forge)
 
 ## Codex configuration and login
 

@@ -1646,3 +1646,26 @@ a {
     border: 1px solid var(--border);
     border-radius: 6px;
 }
+
+.git-transport-warning {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    padding: 12px;
+    color: #ffd9da;
+    background: #461e25;
+    border: 1px solid #a44b58;
+    border-radius: 6px;
+    overflow-wrap: anywhere;
+}
+.git-transport-warning svg {
+    flex: none;
+    width: 18px;
+}
+.git-transport-warning p {
+    margin: 4px 0 0;
+}
+.git-transport-label {
+    color: #ffadb2;
+    margin-inline-start: 4px;
+}

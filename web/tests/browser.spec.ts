@@ -334,7 +334,7 @@ test('delegate a personal Git connection to a repository and withdraw it', async
     await page.goto('/#Settings');
     await page.getByRole('button', { name: 'New connection' }).click();
     await page.getByLabel('Connection name').fill(name);
-    await page.getByLabel('HTTPS forge host').fill(origin!);
+    await page.getByLabel('Forge host or origin').fill(origin!);
     await page.getByLabel('Git username').fill('alice');
     await page.getByLabel('Access token').fill('alice-fixture');
     await page.getByRole('button', { name: 'Save connection' }).click();
@@ -366,7 +366,7 @@ test('private repository URL suggestions respect manual edits and requests can b
     await page.goto('/#Settings');
     await page.getByRole('button', { name: 'Add URL', exact: true }).click();
     const source = page.getByLabel('Source Git URL');
-    const destination = page.getByLabel('HTTPS destination');
+    const destination = page.getByLabel('Hosted destination URL');
     const scope = page.getByRole('combobox', { name: 'Match', exact: true });
     await source.fill('git@git.route.test:team/component.git');
     await source.press('Tab');
@@ -406,10 +406,46 @@ test('private repository URL suggestions respect manual edits and requests can b
     ).toBeVisible();
     await page.getByLabel('About this repository request').click();
     await page.getByRole('button', { name: 'Add to mission (read-only)' }).click();
-    await page.getByLabel('Git connection').selectOption({ index: 1 });
+    await page.getByLabel('Git connection').selectOption({ label: 'Forge · alice' });
     await page.getByRole('checkbox').check();
     await page.getByRole('button', { name: 'Add to mission (read-only)' }).click();
     await expect(page.getByRole('button', { name: 'Add to mission (read-only)' })).toHaveCount(0);
     const result = await page.request.post('/api/mission.show', { data: { mission } });
     expect((await result.json()).read_only_repos[0].remote).toBe(origin + '/dependency.git');
+});
+
+test('warns before saving an HTTP destination and selects credentials for its hosted origin', async ({
+    page,
+}) => {
+    const internal = 'http://internal-forge:3000';
+    await page.goto('/#Settings');
+    await page.getByRole('button', { name: 'Add URL', exact: true }).click();
+    const source = page.getByLabel('Source Git URL');
+    const destination = page.getByLabel('Hosted destination URL');
+    await source.fill('https://external.example/team/');
+    await source.press('Tab');
+    await destination.fill(internal + '/repos/');
+    await source.fill('https://external.example/org/');
+    await source.press('Tab');
+    await expect(destination).toHaveValue(internal + '/repos/');
+    await expect(page.getByRole('alert')).toContainText('Unencrypted Git destination');
+    await expect(page.getByRole('alert')).toContainText(internal);
+    await page.getByRole('button', { name: 'Save rule' }).click();
+    await expect(page.getByText('Unencrypted HTTP', { exact: true }).first()).toBeVisible();
+
+    await page.getByRole('button', { name: 'New connection' }).click();
+    await page.getByLabel('Connection name').fill('Internal HTTP');
+    await page.getByLabel('Forge host or origin').fill(internal);
+    await expect(page.getByRole('alert')).toContainText('intercept');
+    await page.getByLabel('Git username').fill('alice');
+    await page.getByLabel('Access token').fill('fixture-token');
+    await page.getByRole('button', { name: 'Save connection' }).click();
+    await expect(page.getByRole('button', { name: /Internal HTTP/ })).toBeVisible();
+    await page.goto('/#mission/' + mission);
+    await page.getByRole('button', { name: 'Mission details', exact: true }).click();
+    await page.getByRole('button', { name: 'Add repository' }).click();
+    await page.getByLabel('Git remote').fill('git@external.example:org/project.git');
+    await page.getByLabel('Git connection').selectOption({ label: 'Internal HTTP · alice' });
+    await expect(page.getByRole('alert')).toContainText(internal);
+    await expect(page.getByRole('alert')).toContainText('credentials');
 });

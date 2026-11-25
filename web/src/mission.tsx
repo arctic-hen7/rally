@@ -1,4 +1,4 @@
-import { gitRequestHelp } from './git-routing';
+import { gitRequestHelp, TransportLabel } from './git-routing';
 import { SecretsPanel } from './access';
 import React, { useEffect, useRef, useState } from 'react';
 import {
@@ -223,7 +223,7 @@ export function Mission({
             op: 'repo.attach',
             initial: { mission: m.id, remote },
             fields: [
-                required('remote', 'HTTPS repository URL'),
+                required('remote', 'Repository URL'),
                 { key: 'connection', label: 'Git connection', type: 'git-access' },
             ],
             submit: 'Add to mission (read-only)',
@@ -540,10 +540,14 @@ export function Mission({
                         {(m.git_requests || []).map((remote: string) => (
                             <div className="notice git-request" key={remote}>
                                 <span>
-                                    Git read access requested for <b>{remote}</b>
+                                    Git read access requested for <b>{remote}</b>{' '}
+                                    <TransportLabel url={remote} />
                                 </span>
                                 <details className="git-help">
-                                    <summary title={gitRequestHelp} aria-label="About this repository request">
+                                    <summary
+                                        title={gitRequestHelp}
+                                        aria-label="About this repository request"
+                                    >
                                         <Info />
                                     </summary>
                                     <span>{gitRequestHelp}</span>
@@ -745,7 +749,8 @@ export function Mission({
                                             {r.needs_transfer
                                                 ? 'Needs transfer'
                                                 : r.status.state || 'Preparing'}
-                                            {r.contributor_name && ' · Contributed by ' + r.contributor_name}
+                                            {r.contributor_name && ' · Contributed by ' + r.contributor_name}{' '}
+                                            <TransportLabel url={r.upstream} />
                                         </small>
                                         {r.status.error && <p className="error">{r.status.error}</p>}
                                         <div className="button-wrap">
@@ -800,7 +805,9 @@ export function Mission({
                                         <strong>{r.remote}</strong>
                                         <small>
                                             {r.needs_transfer ? 'Needs transfer' : 'Read-only'}
-                                            {r.contributor_name && ' · Contributed by ' + r.contributor_name}
+                                            {r.contributor_name &&
+                                                ' · Contributed by ' + r.contributor_name}{' '}
+                                            <TransportLabel url={r.upstream} />
                                         </small>
                                         <div className="button-wrap">
                                             <button onClick={() => takeOver(r)}>Take over</button>

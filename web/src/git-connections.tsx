@@ -1,3 +1,4 @@
+import { TransportLabel, TransportWarning } from './git-routing';
 import React, { useEffect, useState } from 'react';
 import { GitBranch, Plus } from 'lucide-react';
 import { api, Form, required, Section } from './ui';
@@ -28,26 +29,47 @@ export function GitAccess({
             .then(setList)
             .catch((e) => setError(e.message));
     }, []);
+    const [preview, setPreview] = useState({ source: '', upstream: '', error: '' });
+    useEffect(() => {
+        if (!remote) return;
+        let current = true;
+        const timer = setTimeout(() => {
+            api('routing.resolve', { remote })
+                .then((r) => {
+                    if (current) setPreview({ source: remote, upstream: r.upstream, error: '' });
+                })
+                .catch((e) => {
+                    if (current) setPreview({ source: remote, upstream: '', error: e.message });
+                });
+        }, 150);
+        return () => {
+            current = false;
+            clearTimeout(timer);
+        };
+    }, [remote]);
+    const resolved = preview.source === remote ? preview.upstream : '';
     let origin = '';
     try {
-        origin = new URL(remote).origin;
+        origin = new URL(resolved).origin;
     } catch {}
+    const resolving = !!remote && !resolved;
     const matches = list.filter((c) => c.origin === origin);
     return (
         <div className="editor-field">
+            <TransportWarning url={resolved} credentials={!!connection} />
             <label>
                 Git connection
                 <select
-                    required={pending}
-                    value={pending ? '' : connection || 'anonymous'}
+                    required={pending || resolving}
+                    value={pending || resolving ? '' : connection || 'anonymous'}
                     onChange={(e) => change(e.target.value === 'anonymous' ? '' : e.target.value, false)}
                 >
-                    {pending && (
+                    {(pending || resolving) && (
                         <option value="" disabled>
-                            Choose access to reconnect
+                            {pending ? 'Choose access to reconnect' : 'Resolving Git destination…'}
                         </option>
                     )}
-                    <option value="anonymous">Anonymous · read only</option>
+                    {!resolving && <option value="anonymous">Anonymous · read only</option>}
                     {matches.map((c) => (
                         <option key={c.id} value={c.id}>
                             {c.name} · {c.username}
@@ -66,6 +88,9 @@ export function GitAccess({
                     Allow current and future mission members and their hosted agents to{' '}
                     {readOnly ? 'fetch from' : 'fetch and push to'} this repository using my connection.
                 </label>
+            )}
+            {remote && preview.source === remote && preview.error && (
+                <small role="alert">{preview.error}</small>
             )}
             {error && <small role="alert">{error}</small>}
         </div>
@@ -116,7 +141,7 @@ export function GitConnections({ revision, edit }: { revision: number; edit: (f:
                             op: 'connection.create',
                             fields: [
                                 required('name', 'Connection name'),
-                                required('host', 'HTTPS forge host'),
+                                required('host', 'Forge host or origin'),
                                 required('username', 'Git username'),
                                 required('token', 'Access token', 'password'),
                             ],
@@ -129,7 +154,7 @@ export function GitConnections({ revision, edit }: { revision: number; edit: (f:
                 </button>
             }
         >
-            {list.length === 0 && <small>Connect an HTTPS Git account to use private repositories.</small>}
+            {list.length === 0 && <small>Connect a Git account to use private repositories.</small>}
             {list.map((c) => (
                 <React.Fragment key={c.id}>
                     <button
@@ -140,7 +165,7 @@ export function GitConnections({ revision, edit }: { revision: number; edit: (f:
                         <GitBranch />
                         {c.name}
                         <small>
-                            {c.username} · {c.origin}
+                            {c.username} · {c.origin} <TransportLabel url={c.origin} />
                         </small>
                     </button>
                     {selected === c.id && (
@@ -158,7 +183,7 @@ export function GitConnections({ revision, edit }: { revision: number; edit: (f:
                                         edit({
                                             title: 'Replace Git token',
                                             op: 'connection.update',
-                                            initial: { connection: c.id },
+                                            initial: { connection: c.id, host: c.origin },
                                             fields: [required('token', 'New access token', 'password')],
                                         })
                                     }

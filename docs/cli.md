@@ -95,7 +95,7 @@ Use `--mention` and `--link` to send structured references from scripts. The fir
 | `routine create/update/show/list/trigger/enable/disable/transfer` | Run and maintain cron and webhook scripts. |
 | `run show/follow/steer/answer/stop` | Watch and interact with hosted work. `--answer` accepts a JSON object keyed by question ID. |
 
-Use Settings or `rally connection create` to register personal HTTPS Git accounts. [Git connections and delegation](https://github.com/arctic-hen7/rally/blob/main/docs/git-connections.md)
+Use Settings or `rally connection create` to register Git connections for hosted destination origins. [Git connections and delegation](https://github.com/arctic-hen7/rally/blob/main/docs/git-connections.md)
 
 ## Capture local sessions
 

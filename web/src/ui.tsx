@@ -1,4 +1,4 @@
-import { RouteFields } from './git-routing';
+import { RouteFields, TransportWarning } from './git-routing';
 import { GitAccess } from './git-connections';
 import { RepositoryEditor, TriggerEditor } from './triggers';
 import { MarkdownField } from './markdown-editor';
@@ -378,6 +378,9 @@ export function Editor({
                                     </label>
                                 ),
                             )}
+                        {(form.op === 'connection.create' || form.op === 'connection.update') && (
+                            <TransportWarning url={data.host} />
+                        )}
                         {error && (
                             <p role="alert" className="error">
                                 {error}

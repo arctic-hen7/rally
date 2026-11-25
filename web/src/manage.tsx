@@ -1,4 +1,4 @@
-import { GitRoutes } from './git-routing';
+import { GitRoutes, TransportLabel } from './git-routing';
 import { GitConnections } from './git-connections';
 import { ModelSettings, ResourceAccess } from './access';
 import { Webhooks } from './triggers';
@@ -513,7 +513,7 @@ export function Manage({ page, data, edit, act, user, revision, refresh, exit }:
                                 </Section>
                                 {details.remote ? (
                                     <section className="metadata">
-                                        {details.remote}
+                                        {details.remote} <TransportLabel url={details.upstream} />
                                         <br />
                                         {details.revision?.slice(0, 12)}
                                         {details.last_fetch && (
