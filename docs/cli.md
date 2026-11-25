@@ -1,6 +1,28 @@
 # Rally CLI
 
-The `rally` command connects your local Git workspaces, agent sessions and scripts to a self-hosted Rally server. Install a release on Linux or macOS with `cargo install rally-cli --locked --version '=VERSION'`, replacing `VERSION` with the release tag without its leading `v`. You can also download a prebuilt binary from GitHub Releases or build from a checkout with `cargo install --path . --locked`.
+The `rally` command connects your local Git workspaces, agent sessions and scripts to a self-hosted Rally server.
+
+## Install the CLI
+
+Choose the release matching your server. Download `rally-cli-<tag>-<platform>` and its matching `.sha256` file into the same directory. [GitHub Releases](https://github.com/arctic-hen7/rally/releases)
+
+| System | Intel / AMD x86-64 | ARM64 |
+| --- | --- | --- |
+| Linux (glibc), including WSL | `linux-x86_64` | `linux-aarch64` |
+| macOS | `darwin-x86_64` | `darwin-aarch64` (Apple Silicon) |
+
+From the download directory, set `asset` to the filename you downloaded. For example, on Apple Silicon:
+
+```sh
+asset=rally-cli-v0.1.0-darwin-aarch64
+shasum -a 256 -c "$asset.sha256" &&
+    mkdir -p "$HOME/.local/bin" &&
+    install -m 0755 "$asset" "$HOME/.local/bin/rally"
+```
+
+On Linux you can use `sha256sum -c "$asset.sha256"` to verify the download. With `~/.local/bin` on your PATH, run `rally --version` to check the installation.
+
+To install from crates.io, run `cargo install rally-cli --locked --version '=VERSION'`, replacing `VERSION` with the release tag without its leading `v`. To build from a checkout, run `cargo install --path . --locked`.
 
 Use `rally --help` and `rally <command> --help` for flags. Add `--json` for machine-readable output.
 

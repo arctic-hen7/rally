@@ -52,7 +52,9 @@ Set `RALLY_LISTEN=127.0.0.1:18879` in the disposable config for the example port
 
 ## CI and releases
 
-GitHub Actions runs Rust and frontend builds and the PostgreSQL/Chromium integration suite. A pushed `v*` tag builds Linux x86-64 and ARM64 bundles (server, CLI, web app, worker context and docs) and a macOS ARM64 CLI archive. On native Linux runners, the workflow builds the server and worker images for both architectures and combines their registry digests into version-tagged GHCR images. GitHub Releases receives the binaries, `rally-compose.tar.gz` and SHA-256 checksums after both image tags are available.
+GitHub Actions runs Rust and frontend builds and the PostgreSQL/Chromium integration suite. A pushed `v*` release tag produces a standalone `rally-cli-<tag>-<platform>` binary and SHA-256 checksum for each of Linux x86-64, Linux ARM64, Intel Mac and Apple Silicon. Each platform also has a release archive. Linux archives include the server, CLI, web app, worker context and docs.
+
+On native Linux runners, the workflow builds the server and worker images for both architectures and combines their registry digests into version-tagged GHCR images. After the images and crates.io package are published, the workflow attaches the standalone binaries, archives, deployment bundle (`rally-compose.tar.gz`) and checksums to the GitHub release.
 
 ### Cut a release
 

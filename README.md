@@ -29,7 +29,7 @@ The deployment template lives in [examples/compose.yml](examples/compose.yml). F
 
 ## Use the CLI
 
-Download the binary archive for your platform from the same release and put `bin/rally` on your PATH, or install the CLI from crates.io with `cargo install rally-cli --locked --version '=VERSION'`. Replace `VERSION` with the release tag without its leading `v`.
+Download the standalone `rally-cli-<tag>-<platform>` binary and its `.sha256` file from the same GitHub release. Builds are available for Linux and macOS on x86-64 and ARM64. Verify the download and install it as `rally` on your PATH using the [CLI installation instructions](docs/cli.md#install-the-cli).
 
 ```sh
 rally login --url http://localhost:8787 --email you@example.org

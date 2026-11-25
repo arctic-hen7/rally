@@ -138,18 +138,30 @@ jobs:
         include:
           - runner: ubuntu-24.04
             platform: linux-x86_64
+            target: x86_64-unknown-linux-gnu
           - runner: ubuntu-24.04-arm
             platform: linux-aarch64
+            target: aarch64-unknown-linux-gnu
           - runner: macos-15
             platform: darwin-aarch64
+            target: aarch64-apple-darwin
+          - runner: macos-15
+            platform: darwin-x86_64
+            target: x86_64-apple-darwin
     runs-on: ${{ matrix.runner }}
+    env:
+      CARGO_BUILD_TARGET: ${{ matrix.target }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
           name: cargo-release-manifests
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
       - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
       - uses: oven-sh/setup-bun@v2
       - if: runner.os == 'Linux'
         run: |
@@ -158,12 +170,28 @@ jobs:
           (cd web && bun install --frozen-lockfile && bun run build)
           cargo build --release --locked --bins
       - if: runner.os == 'macOS'
-        run: cargo build --release --locked --bin rally
+        run: cargo build --release --locked -p rally-cli --bin rally
       - run: sh scripts/package-release.sh "$GITHUB_REF_NAME" "${{ matrix.platform }}"
+      - name: Verify standalone CLI
+        shell: bash
+        env:
+          PLATFORM: ${{ matrix.platform }}
+        run: |
+          cd artifacts
+          cli="rally-cli-$GITHUB_REF_NAME-$PLATFORM"
+          shasum -a 256 -c "$cli.sha256"
+          if [[ "$RUNNER_OS" == macOS ]]; then
+              arch=${CARGO_BUILD_TARGET%%-*}
+              lipo "$cli" -verify_arch "${arch/aarch64/arm64}"
+          fi
+          if [[ "$(rustc -vV | sed -n 's/^host: //p')" == "$CARGO_BUILD_TARGET" ]]; then
+              test "$("./$cli" --version)" = "rally ${GITHUB_REF_NAME#v}"
+          fi
       - uses: actions/upload-artifact@v4
         with:
           name: rally-${{ matrix.platform }}
           path: artifacts/*
+          if-no-files-found: error
   crates-io:
     needs: [package, image-tags]
     runs-on: ubuntu-24.04
