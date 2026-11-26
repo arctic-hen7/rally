@@ -75,6 +75,7 @@ for line in sys.stdin:
         text = params["input"][0]["text"]
         turn = "turn-" + os.environ["RALLY_RUN"]
         (home / "last-input.txt").write_text(text)
+        (home / "last-effort.txt").write_text(params["effort"])
         send({"id": req, "result": {"turn": {"id": turn}}})
         if text == "We got interrupted, continue":
             finish("Continued in the same native session.")

@@ -47,6 +47,10 @@ const statusFields = [
 export const roleFields = [
     required('name', 'Agent handle'),
     required('model', 'Model'),
+    {
+        ...required('effort', 'Reasoning effort'),
+        suggestions: ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'],
+    },
     required('instructions', 'Developer instructions', 'area'),
 ];
 export const routineFields = [
@@ -96,7 +100,7 @@ export function Manage({ page, data, edit, act, user, revision, refresh, exit }:
                     ...roleFields,
                     { key: 'private', label: 'Make this agent private', type: 'checkbox' },
                 ],
-                initial: { model: 'gpt-6.2-sol' },
+                initial: { model: 'gpt-6.2-sol', effort: 'medium' },
                 submit: 'Create agent',
             });
         if (page === 'Skills')
@@ -486,6 +490,9 @@ export function Manage({ page, data, edit, act, user, revision, refresh, exit }:
                             <>
                                 <Section title="Model">
                                     <code>{details.model}</code>
+                                </Section>
+                                <Section title="Reasoning effort">
+                                    <code>{details.effort}</code>
                                 </Section>
                                 <Section title="Instructions">
                                     <Body text={details.instructions} />

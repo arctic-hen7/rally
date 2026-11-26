@@ -272,6 +272,73 @@ async fn drive(app: &App, rid: &str, token: &str, resuming: bool) -> Result<()> 
     Ok(())
 }
 
+fn acp_option<'a>(options: &'a Value, category: &str) -> Option<&'a Value> {
+    options
+        .as_array()?
+        .iter()
+        .find(|option| option["category"] == category)
+}
+
+async fn configure_acp_model(
+    wire: &mut Wire,
+    session: &str,
+    mut settings: Value,
+    model: &str,
+    effort: &str,
+) -> Result<()> {
+    let mut variant_applies_effort = false;
+    if let Some(option) = acp_option(&settings["configOptions"], "model") {
+        if option["currentValue"] != model {
+            let updated = wire
+                .call(
+                    "session/set_config_option",
+                    json!({"sessionId":session,"configId":option["id"],"value":model}),
+                )
+                .await?;
+            if updated["configOptions"].is_array() {
+                settings["configOptions"] = updated["configOptions"].clone();
+            }
+        }
+    } else {
+        let models = &settings["models"];
+        let current = opt(models, "currentModelId");
+        let variant = format!("{model}[{effort}]");
+        let mut ids = models["availableModels"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|entry| entry["modelId"].as_str());
+        variant_applies_effort = current == variant || ids.clone().any(|id| id == variant);
+        let target = if variant_applies_effort {
+            &variant
+        } else if current.split('[').next() == Some(model) {
+            current
+        } else {
+            ids.find(|id| *id == model || id.split('[').next() == Some(model))
+                .unwrap_or(model)
+        };
+        if current != target {
+            wire.call(
+                "session/set_model",
+                json!({"sessionId":session,"modelId":target}),
+            )
+            .await?;
+        }
+    }
+    if let Some(option) = acp_option(&settings["configOptions"], "thought_level") {
+        if option["currentValue"] != effort {
+            wire.call(
+                "session/set_config_option",
+                json!({"sessionId":session,"configId":option["id"],"value":effort}),
+            )
+            .await?;
+        }
+    } else if !variant_applies_effort && effort != "medium" {
+        bail!("ACP adapter does not advertise reasoning effort {effort} for model {model}");
+    }
+    Ok(())
+}
+
 async fn conversation(
     app: &App,
     r: &Value,
@@ -285,6 +352,7 @@ async fn conversation(
     let session = field(r, "session")?;
     let mid = field(r, "mission")?;
     let model = field(r, "model")?;
+    let effort = field(r, "effort")?;
     let cwd = if engine::local() {
         root.to_string_lossy().to_string()
     } else {
@@ -329,37 +397,7 @@ async fn conversation(
             )
             .await?;
         }
-        if let Some(config) = result["configOptions"]
-            .as_array()
-            .and_then(|opts| opts.iter().find(|o| o["category"] == "model"))
-        {
-            if config["currentValue"] != model {
-                w.call(
-                    "session/set_config_option",
-                    json!({"sessionId":native_id,"configId":config["id"],"value":model}),
-                )
-                .await?;
-            }
-        } else {
-            let models = &result["models"];
-            let current = opt(models, "currentModelId");
-            if current != model && current.split('[').next() != Some(model) {
-                let target = models["availableModels"]
-                    .as_array()
-                    .into_iter()
-                    .flatten()
-                    .filter_map(|m| m["modelId"].as_str())
-                    .find(|id| {
-                        *id == model || id.strip_prefix(model).is_some_and(|s| s.starts_with('['))
-                    })
-                    .unwrap_or(model);
-                w.call(
-                    "session/set_model",
-                    json!({"sessionId":native_id,"modelId":target}),
-                )
-                .await?;
-            }
-        }
+        configure_acp_model(w, &native_id, result, model, effort).await?;
     } else {
         w.call("initialize",json!({"clientInfo":{"name":"rally","version":env!("CARGO_PKG_VERSION")},"capabilities":{"experimentalApi":true}})).await?;
         w.send(json!({"method":"initialized"})).await?;
@@ -453,7 +491,7 @@ async fn conversation(
         let result = w
             .call(
                 "turn/start",
-                json!({"threadId":native_id,"input":[{"type":"text","text":prompt}]}),
+                json!({"threadId":native_id,"effort":effort,"input":[{"type":"text","text":prompt}]}),
             )
             .await?;
         turn = field(&result["turn"], "id")?.to_string();

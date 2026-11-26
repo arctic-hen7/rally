@@ -392,6 +392,12 @@ class Suite:
         )["duplicate"]
         get = lambda: self.req("run.show", {"run": rid})
         question = wait(lambda: get()["questions"], "No queued question")[0]
+        effort_file = self.root / "data/sessions" / get()["session"] / "last-effort.txt"
+        assert effort_file.read_text() == "medium"
+        assert self.req("agent.show", {"agent": self.agent})["effort"] == "medium"
+        self.req("agent.update", {"agent": self.agent, "effort": " "}, denied=True)
+        self.cli("agent", "update", "--agent", self.agent, "--effort", "ultra")
+        assert get()["effort"] == "medium"
         self.req("post", {"thread": self.mid, "body": "implicit steer"}, denied=True)
         self.req("run.steer", {"run": rid, "body": "PROBE alice"})
         wait(
@@ -474,6 +480,8 @@ class Suite:
         get2 = lambda: self.req("run.show", {"run": rid2})
         wait(lambda: "Working" in get2()["partial"], "Second invocation missing")
         assert get()["session"] == get2()["session"]
+        assert effort_file.read_text() == "ultra"
+        self.req("agent.update", {"agent": self.agent, "effort": "max"})
         prompt = (
             self.root / "data/sessions" / get2()["session"] / "last-input.txt"
         ).read_text()
@@ -482,6 +490,7 @@ class Suite:
         self.server()
         wait(lambda: get2()["status"] == "done", "Interrupted work did not resume")
         assert "Continued in the same native session." in get2()["partial"]
+        assert effort_file.read_text() == "ultra"
         output = self.cli("pull", self.mid)
         assert (
             "message:" in output

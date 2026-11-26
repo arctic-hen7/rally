@@ -173,6 +173,7 @@ export type Field = {
     when?: string;
     values?: string[];
     placeholder?: string;
+    suggestions?: string[];
     required?: boolean;
     options?: { value: string; label: string }[];
 };
@@ -362,6 +363,7 @@ export function Editor({
                                             <input
                                                 required={f.required}
                                                 type={f.type || 'text'}
+                                                list={f.suggestions ? f.key + '-suggestions' : undefined}
                                                 placeholder={f.placeholder}
                                                 value={data[f.key] ?? ''}
                                                 onChange={(e) =>
@@ -374,6 +376,13 @@ export function Editor({
                                                     })
                                                 }
                                             />
+                                        )}
+                                        {f.suggestions && (
+                                            <datalist id={f.key + '-suggestions'}>
+                                                {f.suggestions.map((value) => (
+                                                    <option key={value} value={value} />
+                                                ))}
+                                            </datalist>
                                         )}
                                     </label>
                                 ),

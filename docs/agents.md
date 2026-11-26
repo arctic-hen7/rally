@@ -2,7 +2,7 @@
 
 ## Define a role
 
-In Agents, create a handle, select a model supported by your provider and write developer instructions. Give roles the context that makes them useful across tasks. For example, a reviewer can carry the team's compatibility policy and use the same editing and research tools as an implementer. The creator, workspace admins and organisation owner can edit a role. Changes apply to newly dispatched invocations.
+In Agents, create a handle, choose a model and reasoning effort supported by your provider, and write developer instructions. Reasoning effort defaults to `medium` for new and existing agents. The editor suggests `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max` and `ultra`. You can also type a provider-specific value. Give roles the context that makes them useful across tasks. For example, a reviewer can carry the team's compatibility policy and use the same editing and research tools as an implementer. The creator, workspace admins and organisation owner can edit a role. Changes apply to the next dispatch. Steering or resuming a run keeps the model and effort it started with.
 
 Mention a role in a hosted thread to start it. An agent has one persistent native harness session per thread. Rally delivers unseen messages in order followed by the full addressing message. When the unseen history exceeds 100,000 characters the worker receives a file reference. An interrupted active session resumes with “We got interrupted, continue”. The working pane carries questions, steering and streamed output. Its final reply goes back into the parent conversation.
 
@@ -14,7 +14,7 @@ Keep secret files outside the build context. Pass host paths in `RALLY_RUNTIME_M
 
 Podman provides the hosted execution boundary. Inside that container the bundled harness can run commands without a second OS sandbox or interactive approval. Hosts using the development-only local engine retain the native workspace sandbox.
 
-The bundled default adapter uses Codex app-server over stdio. Set `RALLY_ADAPTER=acp` to use an ACP executable named by `RALLY_ACP` (default `codex-acp`), installed in a derived worker image. A replacement ACP executable must support session creation, prompts and session loading for continuity. Steering support depends on adapter capabilities. The local Codex and Claude Code capture hooks operate independently of this choice.
+The bundled default adapter uses Codex app-server over stdio. Set `RALLY_ADAPTER=acp` to use an ACP executable named by `RALLY_ACP` (default `codex-acp`), installed in a derived worker image. A replacement ACP executable must support session creation, prompts and session loading for continuity. Codex receives the configured effort on each new turn. With ACP, Rally selects the adapter’s thought-level option or its matching `model[effort]` variant. If the adapter has no effort control, `medium` uses the adapter default and an explicit non-default effort reports an error. Steering support depends on adapter capabilities. The local Codex and Claude Code capture hooks operate independently of this choice.
 
 For a Responses-compatible provider, create an operator-owned Codex configuration like:
 

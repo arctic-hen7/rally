@@ -245,7 +245,21 @@ test('workspace settings save a status color and the new agent page supplies its
     await page.getByRole('navigation').getByRole('button', { name: 'Agents' }).click();
     await page.getByRole('button', { name: 'New agent', exact: true }).click();
     await expect(page.getByLabel('Model', { exact: true })).toHaveValue('gpt-6.2-sol');
-    await page.getByRole('button', { name: 'Cancel' }).click();
+    const effort = page.getByLabel('Reasoning effort');
+    await expect(effort).toHaveValue('medium');
+    for (const level of ['max', 'ultra']) {
+        await expect(page.locator(`#effort-suggestions option[value="${level}"]`)).toHaveCount(1);
+    }
+    await page.getByLabel('Agent handle').fill('browser-reviewer');
+    await page.getByLabel('Developer instructions').fill('Review release notes.');
+    await effort.fill('max');
+    await page.getByRole('button', { name: 'Create agent' }).click();
+    await page.locator('.resource-row').filter({ hasText: 'browser-reviewer' }).click();
+    await page.getByRole('button', { name: 'Edit agent' }).click();
+    await expect(effort).toHaveValue('max');
+    await effort.fill('ultra');
+    await page.getByRole('button', { name: 'Save', exact: true }).click();
+    await expect(page.locator('.side-pane').getByText('ultra', { exact: true })).toBeVisible();
     await page.locator('button.profile').click();
     await page.getByRole('button', { name: 'New status' }).click();
     await page.getByLabel('Status name').fill('Ready to publish');

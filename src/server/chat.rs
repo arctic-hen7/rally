@@ -214,7 +214,7 @@ async fn post_hosted(
             let r = id("run");
             let work = id("th");
             sqlx::query("INSERT INTO threads(id,mission,title,kind) SELECT $1,$2,name||' · '||$3,'working' FROM agents WHERE id=$4").bind(&work).bind(mid).bind(msg.to_string()).bind(&aid).execute(&mut **tx).await?;
-            sqlx::query("INSERT INTO runs(id,session,dispatcher,trigger,status,readers,grants,model,instructions,working_thread) SELECT $1,$2,$3,$4,'queued',$7::text[],$5,model,instructions,$8 FROM agents WHERE id=$6").bind(&r).bind(&session).bind(&a.uid).bind(msg).bind(&grants).bind(&aid).bind(&readers).bind(&work).execute(&mut **tx).await?;
+            sqlx::query("INSERT INTO runs(id,session,dispatcher,trigger,status,readers,grants,model,effort,instructions,working_thread) SELECT $1,$2,$3,$4,'queued',$7::text[],$5,model,effort,instructions,$8 FROM agents WHERE id=$6").bind(&r).bind(&session).bind(&a.uid).bind(msg).bind(&grants).bind(&aid).bind(&readers).bind(&work).execute(&mut **tx).await?;
             r
         };
         runs.push(rid);

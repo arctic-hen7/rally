@@ -317,12 +317,12 @@ const OPS: &[(&str, &str, &str)] = &[
     ("agent.show", "agent", "Read a role"),
     (
         "agent.create",
-        "name model instructions private",
+        "name model effort instructions private",
         "Create an agent role",
     ),
     (
         "agent.update",
-        "agent model instructions",
+        "agent model effort instructions",
         "Update a role on its next invocation",
     ),
     ("skill.list", "", "List managed skills"),

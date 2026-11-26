@@ -98,6 +98,8 @@ CREATE OR REPLACE FUNCTION can_read(uid text, mid text) RETURNS boolean LANGUAGE
 $$;
 CREATE TABLE IF NOT EXISTS push_deliveries (notification bigint REFERENCES notifications, endpoint text NOT NULL, PRIMARY KEY(notification,endpoint));
 ALTER TABLE skills ADD COLUMN IF NOT EXISTS files jsonb NOT NULL DEFAULT '{}';
+ALTER TABLE agents ADD COLUMN IF NOT EXISTS effort text NOT NULL DEFAULT 'medium';
+ALTER TABLE runs ADD COLUMN IF NOT EXISTS effort text NOT NULL DEFAULT 'medium';
 ALTER TABLE runs ADD COLUMN IF NOT EXISTS working_thread text REFERENCES threads;
 ALTER TABLE runs ADD COLUMN IF NOT EXISTS native_turn text;
 ALTER TABLE messages ADD COLUMN IF NOT EXISTS links jsonb NOT NULL DEFAULT '[]';

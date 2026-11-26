@@ -91,7 +91,8 @@ A single thread export contains its title, mission and a list of source/message 
 ## Post and dispatch
 
 ```sh
-rally agent create --name reviewer --model gpt-6.2-sol --file reviewer.md
+rally agent create --name reviewer --model gpt-6.2-sol --effort high --file reviewer.md
+rally agent update --agent reviewer --effort ultra
 rally post --thread '#dev-12' --mention reviewer --confirm --body 'Review the retry logic.'
 rally post --thread '#dev-12' --link '#dev-5:Provider discussion' --mention reviewer --file follow-up.md
 rally run list --mission dev-12

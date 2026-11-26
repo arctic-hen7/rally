@@ -1,6 +1,12 @@
 use super::*;
 use rally_teams::{digest, secret, slug};
 
+fn agent_effort(data: &Value) -> Result<Option<&str>> {
+    data.get("effort")
+        .map(|_| field(data, "effort").map(str::trim))
+        .transpose()
+}
+
 pub async fn call(app: &App, a: &Actor, op: &str, d: &Value) -> Result<Value> {
     let db = &app.db;
     if matches!(op, "member.remove" | "group.remove" | "account.role") {
@@ -62,13 +68,33 @@ pub async fn call(app: &App, a: &Actor, op: &str, d: &Value) -> Result<Value> {
         "people.list"=>rows(db,"SELECT jsonb_build_object('id',id,'name',name,'kind',kind,'owner',owner,'admin',admin) FROM people ORDER BY name",&[]).await,
         "agent.list" =>rows(db,"SELECT to_jsonb(a)||jsonb_build_object('introduce',can_introduce($1,id)) FROM agents a WHERE can_discover($1,id) ORDER BY name",&[&a.uid]).await,
         "agent.show"=>one(db,"SELECT to_jsonb(a) FROM agents a WHERE (id=$1 OR name=$1) AND can_discover($2,id)",&[field(d,"agent")?,&a.uid]).await,
-        "agent.create"=>{
-            personal(a)?;let aid=id("a");
-            execute(db,"INSERT INTO agents(id,name,instructions,model,creator,private) VALUES($1,$2,$3,$4,$5,$6::text::boolean)",&[&aid,slug(field(d,"name")?)?,opt(d,"instructions"),field(d,"model")?,&a.uid,if d["private"]==true{"true"}else{"false"}]).await?;Ok(json!({"id":aid}))
-        }
-        "agent.update"=>{
+        "agent.create" => {
             personal(a)?;
-            let aid:String=sqlx::query_scalar("UPDATE agents SET instructions=coalesce($2,instructions),model=coalesce($3,model) WHERE (id=$1 OR name=$1) AND (creator=$4 OR $5) RETURNING id").bind(field(d,"agent")?).bind(d["instructions"].as_str()).bind(d["model"].as_str()).bind(&a.uid).bind(a.owner || a.admin).fetch_optional(db).await?.ok_or_else(||anyhow::anyhow!("Access denied"))?;
+            let aid = id("a");
+            sqlx::query("INSERT INTO agents(id,name,instructions,model,creator,private,effort) VALUES($1,$2,$3,$4,$5,$6,$7)")
+                .bind(&aid)
+                .bind(slug(field(d, "name")?)?)
+                .bind(opt(d, "instructions"))
+                .bind(field(d, "model")?)
+                .bind(&a.uid)
+                .bind(d["private"] == true)
+                .bind(agent_effort(d)?.unwrap_or("medium"))
+                .execute(db).await?;
+            Ok(json!({"id":aid}))
+        }
+        "agent.update" => {
+            personal(a)?;
+            let aid: String = sqlx::query_scalar(
+                "UPDATE agents SET instructions=coalesce($2,instructions),model=coalesce($3,model),effort=coalesce($4,effort)
+                 WHERE (id=$1 OR name=$1) AND (creator=$5 OR $6) RETURNING id",
+            )
+            .bind(field(d, "agent")?)
+            .bind(d["instructions"].as_str())
+            .bind(d["model"].as_str())
+            .bind(agent_effort(d)?)
+            .bind(&a.uid)
+            .bind(a.owner || a.admin)
+            .fetch_optional(db).await?.ok_or_else(|| anyhow::anyhow!("Access denied"))?;
             Ok(json!({"id":aid}))
         }
         "member.list"=>{
